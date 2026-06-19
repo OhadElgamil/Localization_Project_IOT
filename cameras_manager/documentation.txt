@@ -1,0 +1,12 @@
+To RUN server on raspberry pi:
+	python3 cameras_manager.py
+	
+If you want to connect esp32 cam, hard-RST the camera.
+
+Once server is up:
+
+1. press space to capture pictures on both pi and esp cam
+2. press p to capture only on pi
+3. press e to capture only on enter
+4. press r to reset the server's connection. 
+   Notice that already taken pictures can be over-written unless saved elsewhere
