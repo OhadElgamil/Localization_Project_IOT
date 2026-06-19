@@ -1,0 +1,5 @@
+To RUN server in raspberry pi:
+  pyhton3 server.py
+
+Once server is up, to connect esp32 cam, hard-RST the camera.
+Once camera is connected, a picture will be taken and sent via WiFi to the pi
