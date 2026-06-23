@@ -1,0 +1,5 @@
+To RUN server in raspberry pi:
+  python3 commander.py
+
+Once server is up, hard-RST camera to connect to server.
+Press Enter to send SNAP command to camera, which will take a picture and send it via WiFi to the pi.
