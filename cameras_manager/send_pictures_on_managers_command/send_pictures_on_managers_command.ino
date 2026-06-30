@@ -3,10 +3,9 @@
 
 // ===========================
 // Network & Pi Settings
-const char* ssid = "BeSpot3873_2.4";
-const char* password = "4A003873";
+const char* ssid = "PiNet";
 
-const char* pi_ip = "10.0.0.45";
+const char* pi_ip = "10.42.0.1";
 const int pi_port = 5000;
 
 // ===========================
@@ -80,7 +79,7 @@ void setup() {
   }
 
   // 3. Connect to Wi-Fi
-  WiFi.begin(ssid, password);
+  WiFi.begin(ssid);
   Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
