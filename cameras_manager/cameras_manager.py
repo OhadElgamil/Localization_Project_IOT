@@ -7,9 +7,12 @@ import termios
 import tty
 import time
 
+
 HOST = '0.0.0.0'
 PORT = 5000
-
+WIDTH = "640"
+HEIGHT = "480"
+QUALITY = "75"
 # Global shared variables for the network thread and inputs
 esp_conn = None
 esp_rfile = None
@@ -29,12 +32,12 @@ def capture_pi_camera(count, on_complete_cb=None):
     filename = f"pi_photo_{count}.jpg"
     try:
         try:
-            subprocess.run(["rpicam-still", "-o", filename, "-t", "100", "--immediate", "--nopreview"], 
+            subprocess.run(["rpicam-still", "-o", filename, "-t", "100", "--immediate", "--nopreview", "--width", WIDTH>
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         except FileNotFoundError:
-            subprocess.run(["libcamera-still", "-o", filename, "-t", "100", "--immediate", "--nopreview"], 
+            subprocess.run(["libcamera-still", "-o", filename, "-t", "100", "--immediate", "--nopreview"],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-            
+
         safe_print(f"[Pi Camera] Success! Saved as {filename}")
     except Exception as e:
         safe_print(f"[Pi Camera] Capture failed: {e}")
@@ -54,7 +57,7 @@ def capture_esp_camera(count, on_complete_cb=None):
     try:
         # 1. Send SNAP command
         esp_conn.sendall(b"SNAP\n")
-        
+
         # 2. Read image size
         size_line = esp_rfile.readline().decode('utf-8').strip()
         if not size_line:
@@ -65,19 +68,12 @@ def capture_esp_camera(count, on_complete_cb=None):
         image_len = int(size_line)
         
         # 3. Read image data
-        image_data = b""
-        bytes_remaining = image_len
-
-        while bytes_remaining > 0:
-            chunk = esp_conn.recv(min(4096, bytes_remaining))
-            if not chunk:
-                break
-            image_data += chunk
-            bytes_remaining -= len(chunk)
-
+        safe_print(f"Reading image")
+        image_data = esp_rfile.read(image_len)
+        safe_print(f"Checing legal")
         # 4. Save image if complete
         if len(image_data) == image_len:
-            filename = f"esp_photo_{count}.jpg"
+            filename = f"./calib_images/{count}.jpg"
             with open(filename, "wb") as f:
                 f.write(image_data)
             safe_print(f"[ESP32-CAM] Success! Saved as {filename}")
@@ -110,11 +106,11 @@ def handle_esp_connection(s):
     while running:
         try:
             conn, addr = s.accept()
-            
+
             conn.settimeout(5.0)
             rfile = conn.makefile('rb')
             ready_line = rfile.readline().decode('utf-8').strip()
-            
+
             if "READY" in ready_line:
                 conn.settimeout(None)
                 esp_conn = conn
@@ -128,15 +124,15 @@ def handle_esp_connection(s):
 
 def run_server():
     global running, pi_photo_count, esp_photo_count, esp_conn
-    
+
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
-    
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((HOST, PORT))
         s.listen()
-        
+
         safe_print(f"Server listening on port {PORT}...")
         safe_print("Controls: [Space] Both, [p] Pi Only, [e] ESP Only, [r] Reset. Press Ctrl+C to exit.\n")
         safe_print("[System] Ready for next command...")
@@ -146,10 +142,10 @@ def run_server():
 
         try:
             tty.setraw(fd)
-            
+
             while running:
                 ready_to_read, _, _ = select.select([sys.stdin], [], [], 0.5)
-                
+
                 if ready_to_read:
                     char = sys.stdin.read(1)
 
@@ -159,7 +155,7 @@ def run_server():
                     if char == ' ':
                         safe_print("\n[System] Capturing photo with BOTH cameras...")
                         pi_photo_count += 1
-                        
+
                         if esp_conn:
                             esp_photo_count += 1
                             completed_cameras = 0
@@ -170,21 +166,21 @@ def run_server():
                                     safe_print("[System] Ready for next command...")
 
                             threading.Thread(target=capture_pi_camera, args=(pi_photo_count, wait_for_both_cb)).start()
-                            threading.Thread(target=capture_esp_camera, args=(esp_photo_count, wait_for_both_cb)).start()
+                            threading.Thread(target=capture_esp_camera, args=(esp_photo_count, wait_for_both_cb)).start>
                         else:
-                            threading.Thread(target=capture_pi_camera, args=(pi_photo_count, lambda: safe_print("[System] Ready for next command..."))).start()
+                            threading.Thread(target=capture_pi_camera, args=(pi_photo_count, lambda: safe_print("[Syste>
                             safe_print("[ESP32-CAM] Cannot capture, camera is not connected.")
-                            
+
                     elif char == 'p' or char == 'P':
                         safe_print("\n[System] Capturing photo with Pi Camera...")
                         pi_photo_count += 1
-                        threading.Thread(target=capture_pi_camera, args=(pi_photo_count, lambda: safe_print("[System] Ready for next command..."))).start()
-                        
+                        threading.Thread(target=capture_pi_camera, args=(pi_photo_count, lambda: safe_print("[System] R>
+
                     elif char == 'e' or char == 'E':
                         safe_print("\n[System] Capturing photo with ESP32-CAM...")
                         if esp_conn:
                             esp_photo_count += 1
-                            threading.Thread(target=capture_esp_camera, args=(esp_photo_count, lambda: safe_print("[System] Ready for next command..."))).start()
+                            threading.Thread(target=capture_esp_camera, args=(esp_photo_count, lambda: safe_print("[Sys>
                         else:
                             safe_print("[ESP32-CAM] Cannot capture, camera is not connected.")
                             safe_print("[System] Ready for next command...")

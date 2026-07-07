@@ -3,16 +3,10 @@
 
 // ===========================
 // Network & Pi Settings
-<<<<<<<< HEAD:ESP32/send_pictures_on_managers_command/send_pictures_on_managers_command.ino
-const char* ssid = "Ohadphone";
-const char* password = "pxwj8287";
 
-const char* pi_ip = "10.208.79.82";
-========
 const char* ssid = "PiNet";
 
 const char* pi_ip = "10.42.0.1";
->>>>>>>> e8cb04a3609db7c28795f314360ae8ee7608a46e:cameras_manager/send_pictures_on_managers_command/send_pictures_on_managers_command.ino
 const int pi_port = 5000;
 
 // ===========================
