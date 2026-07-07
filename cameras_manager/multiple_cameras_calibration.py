@@ -190,11 +190,14 @@ def run_server():
 
                         total_tasks = 1 + len(active_cam_ids) # 1 Pi + N ESPs
                         completed_cameras = 0
-                        
+                        completion_lock = threading.Lock()
+
                         def wait_for_all_cb():
                             nonlocal completed_cameras
-                            completed_cameras += 1
-                            if completed_cameras == total_tasks:
+                            with completion_lock:
+                                completed_cameras += 1
+                                done = (completed_cameras == total_tasks)
+                            if done:
                                 safe_print("[System] Ready for next command...")
 
                         # Trigger Pi
@@ -221,11 +224,14 @@ def run_server():
                         else:
                             total_tasks = len(active_cam_ids)
                             completed_cameras = 0
-                            
+                            completion_lock = threading.Lock()
+
                             def wait_for_esps_cb():
                                 nonlocal completed_cameras
-                                completed_cameras += 1
-                                if completed_cameras == total_tasks:
+                                with completion_lock:
+                                    completed_cameras += 1
+                                    done = (completed_cameras == total_tasks)
+                                if done:
                                     safe_print("[System] Ready for next command...")
                             
                             for cid in active_cam_ids:
@@ -234,18 +240,21 @@ def run_server():
                     elif char == 'r' or char == 'R':
                         safe_print("\n[System] Resetting counters and sending DISCONNECT to all ESP32s...")
                         pi_photo_count = 0
-                        
+
                         with clients_lock:
                             active_cam_ids = list(esp_clients.keys())
-                        
+                            for cid in active_cam_ids:
+                                client = esp_clients.get(cid)
+                                if client:
+                                    try:
+                                        client['conn'].sendall(b"DISCONNECT\n")
+                                    except:
+                                        pass
+
                         for cid in active_cam_ids:
-                            try:
-                                esp_clients[cid]['conn'].sendall(b"DISCONNECT\n")
-                                time.sleep(0.1) 
-                            except:
-                                pass
+                            time.sleep(0.1)
                             close_esp_connection(cid)
-                            
+
                         safe_print("[System] Counters reset and ESPs disconnected.")
                         safe_print("[System] Ready for next command...")
 
