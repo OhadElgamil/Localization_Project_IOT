@@ -16,6 +16,7 @@ QUALITY = "75"
 # Global shared variables for the network thread and inputs
 esp_conn = None
 esp_rfile = None
+esp_id = "UNKNOWN" 
 running = True
 
 # Separate photo counters for each camera
@@ -73,7 +74,7 @@ def capture_esp_camera(count, on_complete_cb=None):
         safe_print(f"Checing legal")
         # 4. Save image if complete
         if len(image_data) == image_len:
-            filename = f"./calib_images/{count}.jpg"
+            filename = f"./{esp_id}_{count}.jpg"
             with open(filename, "wb") as f:
                 f.write(image_data)
             safe_print(f"[ESP32-CAM] Success! Saved as {filename}")
@@ -101,21 +102,24 @@ def close_esp_connection():
         safe_print("[ESP32-CAM] Camera disconnected.")
 
 def handle_esp_connection(s):
-    """Background thread to manage incoming ESP32-CAM connections."""
-    global esp_conn, esp_rfile, running
+    global esp_conn, esp_rfile, esp_id, running
     while running:
         try:
             conn, addr = s.accept()
-
             conn.settimeout(5.0)
             rfile = conn.makefile('rb')
+            
+            # Read the ID line, then the READY line
+            id_line = rfile.readline().decode('utf-8').strip()
             ready_line = rfile.readline().decode('utf-8').strip()
 
-            if "READY" in ready_line:
+            if id_line.startswith("ID:") and "READY" in ready_line:
                 conn.settimeout(None)
                 esp_conn = conn
                 esp_rfile = rfile
-                safe_print(f"\n[ESP32-CAM] Camera connected successfully from {addr[0]} (Ready).")
+                esp_id = id_line.split(":")[1] # Extracts "R", "L", or "F"
+                
+                safe_print(f"\n[ESP32-CAM] Camera {esp_id} connected successfully from {addr[0]}.")
                 safe_print("[System] Ready for next command...")
             else:
                 conn.close()
