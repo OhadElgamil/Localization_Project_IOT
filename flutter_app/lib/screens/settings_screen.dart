@@ -151,6 +151,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Text('API Endpoints', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           _ApiDocsCard(baseUrl: conn.baseUrl),
+          const SizedBox(height: 32),
+          Center(
+            child: Text(
+              'App v1.0.1+2',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+            ),
+          ),
         ],
       ),
     );

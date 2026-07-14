@@ -21,10 +21,15 @@ pipeline.py      Orchestrator / entry point
 
 ## Camera wire protocol
 
-Matches `ESP32/send_pictures_on_managers_command/send_pictures_on_managers_command.ino`:
+Matches `ESP_EYE/send_pictures_on_command/send_pictures_on_command.ino` (the confirmed hardware
+in use — ESP-EYE boards, UXGA/1600x1200 frames). The older AI-Thinker sketch at
+`ESP32/send_pictures_on_managers_command/send_pictures_on_managers_command.ino` speaks a
+compatible subset of the same protocol and also works.
 
-1. Each ESP32-CAM opens a TCP connection to the Pi on port 5000 and keeps it open.
-2. It sends one handshake line identifying itself: `ID:FRONT\n`, `ID:LEFT\n`, or `ID:RIGHT\n`.
+1. Each camera opens a TCP connection to the Pi on port 5000 and keeps it open.
+2. It sends a handshake identifying itself: `ID:FRONT\n` / `ID:LEFT\n` / `ID:RIGHT\n`, immediately
+   followed by a `READY\n` line (the ESP-EYE firmware sends both; `camera_link.py` drains the
+   `READY\n` if present with a short timeout, so it also works with firmware that only sends `ID:`).
 3. The Pi sends `SNAP\n` whenever it wants a frame from that camera.
 4. The camera replies with a decimal length line, then exactly that many bytes of JPEG.
 5. If a camera drops, the firmware reconnects on its own every 2s; the manager just keeps accepting.

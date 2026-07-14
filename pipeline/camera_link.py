@@ -149,6 +149,20 @@ class CameraManager:
                 logger.warning("Rejecting connection from %s: unrecognized handshake %r", addr[0], line)
                 conn.close()
                 return
+
+            # ESP_EYE/send_pictures_on_command.ino sends a second "READY\n"
+            # line right after the ID line. Older AI-Thinker firmware
+            # doesn't. Drain it if present so it can't get mistaken for a
+            # SNAP response's length line later; a short timeout lets us
+            # tell "no second line coming" apart from "still in flight".
+            conn.settimeout(0.5)
+            try:
+                extra = rfile.readline().decode("ascii", errors="ignore").strip()
+                if extra and extra.upper() != "READY":
+                    logger.debug("[%s] unexpected line after handshake: %r", name, extra)
+            except socket.timeout:
+                pass
+
             conn.settimeout(None)
             link = EspCameraLink(name, conn, addr)
             with self._links_lock:

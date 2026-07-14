@@ -25,7 +25,7 @@ CAMERA_TCP_PORT = 5000
 # ConnectionProvider default).
 API_BASE_URL = "http://127.0.0.1:5001"
 
-SNAP_TIMEOUT_S = 3.0       # how long to wait for one ESP32-CAM SNAP round trip
+SNAP_TIMEOUT_S = 6.0       # UXGA (1600x1200) JPEGs are large; give the round trip room
 CYCLE_SLEEP_S = 0.05       # gap between sampling cycles
 
 # ---------------------------------------------------------------------------
@@ -48,10 +48,11 @@ MARKER_SIZE_M = 0.05  # TODO: must match the physical markers on the wall
 CALIBRATION_DIR = os.path.join(PIPELINE_DIR, "calibration_data")
 
 # Fallback intrinsics used when no calibration file exists for a camera yet.
-# Matches the SVGA (800x600) frame size configured in the ESP32 firmware.
-DEFAULT_FRAME_WIDTH = 800
-DEFAULT_FRAME_HEIGHT = 600
-DEFAULT_FOCAL_LENGTH = 800.0
+# Matches the UXGA (1600x1200) frame size configured in
+# ESP_EYE/send_pictures_on_command/send_pictures_on_command.ino.
+DEFAULT_FRAME_WIDTH = 1600
+DEFAULT_FRAME_HEIGHT = 1200
+DEFAULT_FOCAL_LENGTH = 1600.0
 
 PICAM_WIDTH = 800
 PICAM_HEIGHT = 600

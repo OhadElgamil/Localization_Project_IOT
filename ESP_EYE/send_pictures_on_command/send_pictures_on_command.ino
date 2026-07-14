@@ -8,7 +8,9 @@ const char* ssid = "PiNet";
 const char* pi_ip = "10.42.0.1";
 const int pi_port = 5000;
 
-const String CAMERA_ID = "RIGHT"; 
+// Set to "FRONT", "LEFT", or "RIGHT" before flashing each unit — this is how
+// the Pi tells the three cameras apart (pipeline/camera_link.py).
+const String CAMERA_ID = "RIGHT";
 
 // ===========================
 // ESP-EYE Camera Pins
