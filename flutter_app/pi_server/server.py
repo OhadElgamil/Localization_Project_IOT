@@ -17,10 +17,10 @@ _localization_result: dict = {
     "timestamp": datetime.now(timezone.utc).isoformat(),
 }
 
-def update_localization(x: float, y: float, z: float, yaw: float = 0.0, confidence: float = 1.0, markers_detected: int = 0) -> None:
+def update_localization(x: float, y: float, z: float, yaw: float = 0.0, pitch: float = 0.0, roll: float = 0.0, confidence: float = 1.0, markers_detected: int = 0) -> None:
     _localization_result.update({
         "position": {"x": x, "y": y, "z": z},
-        "orientation": {"yaw": yaw, "pitch": 0.0, "roll": 0.0},
+        "orientation": {"yaw": yaw, "pitch": pitch, "roll": roll},
         "confidence": confidence,
         "markers_detected": markers_detected,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -62,24 +62,44 @@ def clear_markers():
 
 @app.route("/api/localization", methods=["GET"])
 def get_localization():
-    return jsonify(_localization_result)
-
-@app.route("/api/localization", methods=["GET"])
-def get_localization():
     try:
         # Check how much time has passed since the last valid camera update
         last_time = datetime.fromisoformat(_localization_result["timestamp"])
         time_since_update = (datetime.now(timezone.utc) - last_time).total_seconds()
-        
+
         # If no camera has seen a barcode in over 1 second, set count to 0
         if time_since_update > 1.0:
             _localization_result["markers_detected"] = 0
-            
+
     except ValueError:
         pass # Failsafe just in case the timestamp format is slightly off
 
     return jsonify(_localization_result)
 
+@app.route("/api/localization", methods=["POST"])
+def post_localization():
+    data = request.get_json(force=True)
+    position = data.get("position") or data
+    orientation = data.get("orientation") or data
+    try:
+        update_localization(
+            x=float(position["x"]),
+            y=float(position["y"]),
+            z=float(position["z"]),
+            yaw=float(orientation.get("yaw", 0.0)) if isinstance(orientation, dict) else float(data.get("yaw", 0.0)),
+            pitch=float(orientation.get("pitch", 0.0)) if isinstance(orientation, dict) else float(data.get("pitch", 0.0)),
+            roll=float(orientation.get("roll", 0.0)) if isinstance(orientation, dict) else float(data.get("roll", 0.0)),
+            confidence=float(data.get("confidence", 1.0)),
+            markers_detected=int(data.get("markers_detected", 0)),
+        )
+    except (KeyError, TypeError, ValueError) as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    return jsonify({"success": True}), 201
+
 if __name__ == "__main__":
-    print("ArUco Localization Server starting on http://0.0.0.0:5000")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    # Port 5001, not 5000: the ESP32-CAM firmware has port 5000 hardcoded for
+    # its own TCP camera protocol (pipeline/camera_link.py listens there), so
+    # this REST API had to move to avoid the collision. Update the Flutter
+    # app's connection settings if it's still pointing at 5000.
+    print("ArUco Localization Server starting on http://0.0.0.0:5001")
+    app.run(host="0.0.0.0", port=5001, debug=False)

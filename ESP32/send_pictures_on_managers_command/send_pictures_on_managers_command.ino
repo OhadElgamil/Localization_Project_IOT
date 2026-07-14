@@ -9,6 +9,10 @@ const char* ssid = "PiNet";
 const char* pi_ip = "10.42.0.1";
 const int pi_port = 5000;
 
+// Set to "FRONT", "LEFT", or "RIGHT" before flashing each unit — this is how
+// the Pi tells the three cameras apart (pipeline/camera_link.py).
+const char* camera_id = "FRONT";
+
 // ===========================
 // AI Thinker Camera Pins
 #define PWDN_GPIO_NUM     32
@@ -95,8 +99,8 @@ void loop() {
   WiFiClient client;
   
   if (client.connect(pi_ip, pi_port)) {    
-    Serial.println("Connected to Pi. Sending READY signal...");
-    client.print("READY\n");
+    Serial.println("Connected to Pi. Sending ID signal...");
+    client.printf("ID:%s\n", camera_id);
 
     while (client.connected()) {
       if (client.available()) {

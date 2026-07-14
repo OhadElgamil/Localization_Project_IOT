@@ -95,7 +95,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   controller: _portCtrl,
                   decoration: const InputDecoration(
                     labelText: 'Port',
-                    hintText: '5000',
+                    hintText: '5001',
                     prefixIcon: Icon(Icons.lan_outlined),
                     border: OutlineInputBorder(),
                   ),

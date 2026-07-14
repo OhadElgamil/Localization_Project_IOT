@@ -8,7 +8,7 @@ class ConnectionProvider extends ChangeNotifier {
   static const _keyPort = 'pi_port';
 
   String _host = '192.168.1.100';
-  int _port = 5000;
+  int _port = 5001; // pi_server/server.py now runs on 5001 (5000 is used by the ESP32-CAM TCP protocol)
   PiStatus _status = PiStatus.offline();
   bool _isChecking = false;
 

@@ -1,0 +1,9 @@
+opencv-contrib-python
+numpy
+requests
+
+# Built-in Pi camera support (install via apt, not pip, on Raspberry Pi OS):
+#   sudo apt install -y python3-picamera2
+# If picamera2 isn't available, the pipeline falls back to the rpicam-still /
+# libcamera-still CLI tools, and finally to cv2.VideoCapture(0) for local
+# development on a non-Pi machine.
