@@ -7,19 +7,19 @@ import termios
 import tty
 import time
 
-
 HOST = '0.0.0.0'
 PORT = 5000
 WIDTH = "640"
 HEIGHT = "480"
 QUALITY = "75"
-# Global shared variables for the network thread and inputs
-esp_conn = None
-esp_rfile = None
-esp_id = "UNKNOWN" 
+
+# Thread-safe dictionary to track multiple connected cameras: { "ID": (conn, rfile) }
+cameras = {}
+cameras_lock = threading.Lock()
+
 running = True
 
-# Separate photo counters for each camera
+# Separate photo counters for each camera type
 pi_photo_count = 0
 esp_photo_count = 0
 
@@ -33,7 +33,7 @@ def capture_pi_camera(count, on_complete_cb=None):
     filename = f"pi_photo_{count}.jpg"
     try:
         try:
-            subprocess.run(["rpicam-still", "-o", filename, "-t", "100", "--immediate", "--nopreview", "--width", WIDTH>
+            subprocess.run(["rpicam-still", "-o", filename, "-t", "100", "--immediate", "--nopreview", "--width", WIDTH],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         except FileNotFoundError:
             subprocess.run(["libcamera-still", "-o", filename, "-t", "100", "--immediate", "--nopreview"],
@@ -46,63 +46,57 @@ def capture_pi_camera(count, on_complete_cb=None):
         if on_complete_cb:
             on_complete_cb()
 
-def capture_esp_camera(count, on_complete_cb=None):
-    """Triggers and receives an image from the connected ESP32-CAM."""
-    global esp_conn, esp_rfile
-    if not esp_conn:
-        safe_print("[ESP32-CAM] Cannot capture, camera is not connected.")
-        if on_complete_cb:
-            on_complete_cb()
-        return
-
+def capture_esp_camera(cam_id, conn, rfile, count, on_complete_cb=None):
+    """Triggers and receives an image from a specific connected ESP32-CAM."""
     try:
         # 1. Send SNAP command
-        esp_conn.sendall(b"SNAP\n")
+        conn.sendall(b"SNAP\n")
 
         # 2. Read image size
-        size_line = esp_rfile.readline().decode('utf-8').strip()
+        size_line = rfile.readline().decode('utf-8').strip()
         if not size_line:
-            safe_print("[ESP32-CAM] Connection closed by device.")
-            close_esp_connection()
+            safe_print(f"[ESP32-CAM - {cam_id}] Connection closed by device.")
+            close_esp_connection(cam_id)
             return
 
         image_len = int(size_line)
         
         # 3. Read image data
-        safe_print(f"Reading image")
-        image_data = esp_rfile.read(image_len)
-        safe_print(f"Checing legal")
+        safe_print(f"Reading image from {cam_id}...")
+        image_data = rfile.read(image_len)
+        
         # 4. Save image if complete
         if len(image_data) == image_len:
-            filename = f"./{esp_id}_{count}.jpg"
+            filename = f"./{cam_id}_{count}.jpg"
             with open(filename, "wb") as f:
                 f.write(image_data)
-            safe_print(f"[ESP32-CAM] Success! Saved as {filename}")
+            safe_print(f"[ESP32-CAM - {cam_id}] Success! Saved as {filename}")
         else:
-            safe_print("[ESP32-CAM] Error: Incomplete image received.")
-            close_esp_connection()
+            safe_print(f"[ESP32-CAM - {cam_id}] Error: Incomplete image received.")
+            close_esp_connection(cam_id)
 
     except (socket.error, ValueError) as e:
-        safe_print(f"[ESP32-CAM] Connection error during capture: {e}")
-        close_esp_connection()
+        safe_print(f"[ESP32-CAM - {cam_id}] Connection error during capture: {e}")
+        close_esp_connection(cam_id)
     finally:
         if on_complete_cb:
             on_complete_cb()
 
-def close_esp_connection():
-    """Safely closes the active ESP32 connection."""
-    global esp_conn, esp_rfile
-    if esp_conn:
-        try:
-            esp_conn.close()
-        except:
-            pass
-        esp_conn = None
-        esp_rfile = None
-        safe_print("[ESP32-CAM] Camera disconnected.")
+def close_esp_connection(cam_id):
+    """Safely closes and removes a specific ESP32 connection."""
+    with cameras_lock:
+        if cam_id in cameras:
+            conn, rfile = cameras[cam_id]
+            try:
+                conn.close()
+            except:
+                pass
+            del cameras[cam_id]
+            safe_print(f"[ESP32-CAM - {cam_id}] Camera disconnected.")
 
 def handle_esp_connection(s):
-    global esp_conn, esp_rfile, esp_id, running
+    """Background thread to manage incoming ESP32-CAM connections."""
+    global running
     while running:
         try:
             conn, addr = s.accept()
@@ -115,11 +109,18 @@ def handle_esp_connection(s):
 
             if id_line.startswith("ID:") and "READY" in ready_line:
                 conn.settimeout(None)
-                esp_conn = conn
-                esp_rfile = rfile
-                esp_id = id_line.split(":")[1] # Extracts "R", "L", or "F"
+                cam_id = id_line.split(":")[1] # "RIGHT", "LEFT", "FRONT"
                 
-                safe_print(f"\n[ESP32-CAM] Camera {esp_id} connected successfully from {addr[0]}.")
+                with cameras_lock:
+                    # Clean up old connection if same camera ID reconnects
+                    if cam_id in cameras:
+                        try:
+                            cameras[cam_id][0].close()
+                        except:
+                            pass
+                    cameras[cam_id] = (conn, rfile)
+                
+                safe_print(f"\n[ESP32-CAM] Camera {cam_id} connected successfully from {addr[0]}.")
                 safe_print("[System] Ready for next command...")
             else:
                 conn.close()
@@ -127,7 +128,7 @@ def handle_esp_connection(s):
             pass
 
 def run_server():
-    global running, pi_photo_count, esp_photo_count, esp_conn
+    global running, pi_photo_count, esp_photo_count
 
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
@@ -138,7 +139,7 @@ def run_server():
         s.listen()
 
         safe_print(f"Server listening on port {PORT}...")
-        safe_print("Controls: [Space] Both, [p] Pi Only, [e] ESP Only, [r] Reset. Press Ctrl+C to exit.\n")
+        safe_print("Controls: [Space] Both, [p] Pi Only, [e] ESPs Only, [r] Reset. Press Ctrl+C to exit.\n")
         safe_print("[System] Ready for next command...")
 
         conn_thread = threading.Thread(target=handle_esp_connection, args=(s,), daemon=True)
@@ -157,54 +158,83 @@ def run_server():
                         raise KeyboardInterrupt
 
                     if char == ' ':
-                        safe_print("\n[System] Capturing photo with BOTH cameras...")
+                        safe_print("\n[System] Capturing photo with BOTH Pi and all connected ESP cameras...")
                         pi_photo_count += 1
-
-                        if esp_conn:
+                        
+                        with cameras_lock:
+                            connected_cams = list(cameras.items())
+                        
+                        if connected_cams:
                             esp_photo_count += 1
-                            completed_cameras = 0
-                            def wait_for_both_cb():
-                                nonlocal completed_cameras
-                                completed_cameras += 1
-                                if completed_cameras == 2:
-                                    safe_print("[System] Ready for next command...")
+                            total_operations = 1 + len(connected_cams)
+                            completed_ops = 0
+                            
+                            def make_callback():
+                                def callback():
+                                    nonlocal completed_ops
+                                    completed_ops += 1
+                                    if completed_ops == total_operations:
+                                        safe_print("[System] Ready for next command...")
+                                return callback
 
-                            threading.Thread(target=capture_pi_camera, args=(pi_photo_count, wait_for_both_cb)).start()
-                            threading.Thread(target=capture_esp_camera, args=(esp_photo_count, wait_for_both_cb)).start>
+                            cb = make_callback()
+                            threading.Thread(target=capture_pi_camera, args=(pi_photo_count, cb)).start()
+                            for cam_id, (conn, rfile) in connected_cams:
+                                threading.Thread(target=capture_esp_camera, args=(cam_id, conn, rfile, esp_photo_count, cb)).start()
                         else:
-                            threading.Thread(target=capture_pi_camera, args=(pi_photo_count, lambda: safe_print("[Syste>
-                            safe_print("[ESP32-CAM] Cannot capture, camera is not connected.")
+                            threading.Thread(target=capture_pi_camera, args=(pi_photo_count, lambda: safe_print("[System] Ready for next command..."))).start()
+                            safe_print("[ESP32-CAM] Cannot capture ESP, no cameras connected.")
 
-                    elif char == 'p' or char == 'P':
+                    elif char in ('p', 'P'):
                         safe_print("\n[System] Capturing photo with Pi Camera...")
                         pi_photo_count += 1
-                        threading.Thread(target=capture_pi_camera, args=(pi_photo_count, lambda: safe_print("[System] R>
+                        threading.Thread(target=capture_pi_camera, args=(pi_photo_count, lambda: safe_print("[System] Ready for next command..."))).start()
 
-                    elif char == 'e' or char == 'E':
-                        safe_print("\n[System] Capturing photo with ESP32-CAM...")
-                        if esp_conn:
+                    elif char in ('e', 'E'):
+                        with cameras_lock:
+                            connected_cams = list(cameras.items())
+                            
+                        if connected_cams:
+                            safe_print("\n[System] Capturing photo with all connected ESP32-CAMs...")
                             esp_photo_count += 1
-                            threading.Thread(target=capture_esp_camera, args=(esp_photo_count, lambda: safe_print("[Sys>
+                            total_operations = len(connected_cams)
+                            completed_ops = 0
+                            
+                            def make_callback():
+                                def callback():
+                                    nonlocal completed_ops
+                                    completed_ops += 1
+                                    if completed_ops == total_operations:
+                                        safe_print("[System] Ready for next command...")
+                                return callback
+                                
+                            cb = make_callback()
+                            for cam_id, (conn, rfile) in connected_cams:
+                                threading.Thread(target=capture_esp_camera, args=(cam_id, conn, rfile, esp_photo_count, cb)).start()
                         else:
-                            safe_print("[ESP32-CAM] Cannot capture, camera is not connected.")
+                            safe_print("[ESP32-CAM] Cannot capture, no cameras connected.")
                             safe_print("[System] Ready for next command...")
 
-                    elif char == 'r' or char == 'R':
-                        safe_print("\n[System] Resetting counters and sending DISCONNECT to ESP32...")
+                    elif char in ('r', 'R'):
+                        safe_print("\n[System] Resetting counters and disconnecting all ESP32s...")
                         pi_photo_count = 0
                         esp_photo_count = 0
                         
-                        if esp_conn:
-                            try:
-                                # Send explicit disconnect command to the ESP32
-                                esp_conn.sendall(b"DISCONNECT\n")
-                                time.sleep(0.2)  # Give ESP32 a brief moment to process the line
-                            except:
-                                pass
-                            close_esp_connection()
-                        else:
-                            safe_print("[System] Counters reset. No active ESP connection.")
-                            safe_print("[System] Ready for next command...")
+                        with cameras_lock:
+                            active_cam_ids = list(cameras.keys())
+                            
+                        for cam_id in active_cam_ids:
+                            with cameras_lock:
+                                conn = cameras.get(cam_id, (None, None))[0]
+                            if conn:
+                                try:
+                                    conn.sendall(b"DISCONNECT\n")
+                                    time.sleep(0.05)
+                                except:
+                                    pass
+                            close_esp_connection(cam_id)
+                            
+                        safe_print("[System] Reset complete. Ready for next command...")
 
         except KeyboardInterrupt:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
