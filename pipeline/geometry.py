@@ -4,8 +4,12 @@ Conventions:
 - All poses are 4x4 homogeneous transforms T = [[R, t], [0, 1]].
 - T_a_b means "pose of frame b expressed in frame a": a point p_b in frame b's
   local coordinates maps to frame a via p_a = T_a_b @ p_b.
-- Euler angles are roll (X), pitch (Y), yaw (Z) in the ZYX (yaw-pitch-roll)
-  convention: R = Rz(yaw) @ Ry(pitch) @ Rx(roll). Units: radians in, radians out.
+- World/robot axes are **Y-up**: X = forward, Y = up, Z = right (right-handed:
+  X cross Y = Z). This matches the project's OptiTrack ground-truth frame.
+- Euler angles are roll (about X/forward), pitch (about Z/right), yaw (about
+  Y/up) -- i.e. yaw is the compass-heading rotation, matching the "up" axis
+  above: R = Ry(yaw) @ Rz(pitch) @ Rx(roll). Units: radians in, radians out.
+  A positive yaw of +90 deg rotates "forward" toward -Z (left).
 """
 import numpy as np
 
@@ -26,26 +30,32 @@ def invert_homogeneous(T: np.ndarray) -> np.ndarray:
     return T_inv
 
 
-def euler_zyx_to_rotation_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
+def euler_to_rotation_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
+    """R = Ry(yaw) @ Rz(pitch) @ Rx(roll); see module docstring for axes."""
     cr, sr = np.cos(roll), np.sin(roll)
     cp, sp = np.cos(pitch), np.sin(pitch)
     cy, sy = np.cos(yaw), np.sin(yaw)
-    Rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
-    Ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+    Ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    Rz = np.array([[cp, -sp, 0], [sp, cp, 0], [0, 0, 1]])
     Rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
-    return Rz @ Ry @ Rx
+    return Ry @ Rz @ Rx
 
 
-def rotation_matrix_to_euler_zyx(R: np.ndarray):
-    sy = np.clip(-R[2, 0], -1.0, 1.0)
-    pitch = np.arcsin(sy)
-    if abs(sy) < 0.99999:
-        yaw = np.arctan2(R[1, 0], R[0, 0])
-        roll = np.arctan2(R[2, 1], R[2, 2])
+def rotation_matrix_to_euler(R: np.ndarray):
+    """Inverse of euler_to_rotation_matrix. Returns (roll, pitch, yaw)."""
+    sp = np.clip(R[1, 0], -1.0, 1.0)
+    pitch = np.arcsin(sp)
+    if abs(sp) < 0.99999:
+        yaw = np.arctan2(-R[2, 0], R[0, 0])
+        roll = np.arctan2(-R[1, 2], R[1, 1])
     else:
-        # Gimbal lock: roll and yaw become coupled, pick roll = 0.
-        yaw = np.arctan2(-R[0, 1], R[1, 1])
+        # Gimbal lock (pitch ~ +/-90 deg): roll and yaw become coupled, so we
+        # fix roll = 0 and solve for yaw from the remaining coupled terms.
         roll = 0.0
+        if sp > 0:
+            yaw = np.arctan2(R[2, 1], R[2, 2])
+        else:
+            yaw = np.arctan2(-R[2, 1], R[2, 2])
     return roll, pitch, yaw
 
 
@@ -53,7 +63,7 @@ def extrinsic_transform(translation_m, rpy_deg) -> np.ndarray:
     """Build T_robot_cam (camera pose expressed in the robot body frame) from a
     mounting offset in meters and roll/pitch/yaw in degrees."""
     roll, pitch, yaw = np.radians(rpy_deg)
-    R = euler_zyx_to_rotation_matrix(roll, pitch, yaw)
+    R = euler_to_rotation_matrix(roll, pitch, yaw)
     return homogeneous(R, np.asarray(translation_m, dtype=float))
 
 

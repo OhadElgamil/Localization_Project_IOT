@@ -16,7 +16,7 @@ class MarkerDetection:
     marker_id: int
     camera_name: str
     distance_m: float
-    T_cam_marker: np.ndarray  # pose of the camera, expressed in the marker's local frame
+    T_marker_cam: np.ndarray  # pose of the camera, expressed in the marker's local frame
 
 
 def _default_intrinsics(config):
@@ -73,24 +73,42 @@ class ArucoDetector:
         camera_matrix, dist_coeffs = self._intrinsics_for(camera_name)
         corners, ids, _ = self._detector.detectMarkers(frame)
         if ids is None:
+            logger.debug("[%s] frame %dx%d: no markers detected", camera_name, frame.shape[1], frame.shape[0])
             return []
+
+        logger.debug("[%s] frame %dx%d: raw marker ids seen = %s",
+                     camera_name, frame.shape[1], frame.shape[0], [int(i[0]) for i in ids])
 
         detections = []
         for i in range(len(ids)):
+            marker_id = int(ids[i][0])
             success, rvec, tvec = cv2.solvePnP(
                 self._obj_points, corners[i][0], camera_matrix, dist_coeffs)
             if not success:
+                logger.warning("[%s] marker %d: solvePnP failed", camera_name, marker_id)
                 continue
 
             distance = float(np.linalg.norm(tvec))
+            # T_cam_marker: transform that maps a point from the marker's local
+            # frame into the camera's frame -- this is exactly solvePnP's [R|t].
             R, _ = cv2.Rodrigues(rvec)
-            T_marker_cam = homogeneous(R, tvec)  # marker -> camera
-            T_cam_marker = invert_homogeneous(T_marker_cam)  # camera pose in marker frame
+            T_cam_marker = homogeneous(R, tvec)
+            # T_marker_cam: the camera's own pose, expressed in the marker's
+            # local frame (i.e. "where is the camera, as seen from the marker").
+            T_marker_cam = invert_homogeneous(T_cam_marker)
+
+            rvec_deg = np.degrees(rvec.flatten())
+            logger.info(
+                "[%s] marker %d: distance=%.3fm tvec=(%.3f, %.3f, %.3f)m rvec=(%.1f, %.1f, %.1f)deg "
+                "corner_px=%s",
+                camera_name, marker_id, distance, tvec[0][0], tvec[1][0], tvec[2][0],
+                rvec_deg[0], rvec_deg[1], rvec_deg[2], corners[i][0][0].round(1).tolist(),
+            )
 
             detections.append(MarkerDetection(
-                marker_id=int(ids[i][0]),
+                marker_id=marker_id,
                 camera_name=camera_name,
                 distance_m=distance,
-                T_cam_marker=T_cam_marker,
+                T_marker_cam=T_marker_cam,
             ))
         return detections

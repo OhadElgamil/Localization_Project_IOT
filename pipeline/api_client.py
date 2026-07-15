@@ -24,7 +24,9 @@ class ApiClient:
             "confidence": float(result.confidence),
             "markers_detected": int(result.markers_detected),
         }
+        logger.info("POST %s/api/localization payload=%s", self.base_url, payload)
         try:
-            requests.post(f"{self.base_url}/api/localization", json=payload, timeout=self.timeout)
+            resp = requests.post(f"{self.base_url}/api/localization", json=payload, timeout=self.timeout)
+            logger.debug("POST response: %s %s", resp.status_code, resp.text[:200])
         except requests.exceptions.RequestException as e:
-            logger.debug("Failed to POST localization result: %s", e)
+            logger.warning("Failed to POST localization result: %s", e)

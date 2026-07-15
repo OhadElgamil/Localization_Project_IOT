@@ -28,6 +28,11 @@ API_BASE_URL = "http://127.0.0.1:5001"
 SNAP_TIMEOUT_S = 6.0       # UXGA (1600x1200) JPEGs are large; give the round trip room
 CYCLE_SLEEP_S = 0.05       # gap between sampling cycles
 
+# "DEBUG" logs every raw detection, distance, candidate pose, and POST
+# payload -- verbose but exactly what you want while diagnosing bad output.
+# Turn down to "INFO" for quieter day-to-day running once things check out.
+LOG_LEVEL = "DEBUG"
+
 # ---------------------------------------------------------------------------
 # Marker map (shared with the Flutter app via the filesystem)
 # ---------------------------------------------------------------------------
@@ -39,8 +44,8 @@ MARKERS_FILE = os.path.join(REPO_ROOT, "flutter_app", "pi_server", "markers.json
 # ---------------------------------------------------------------------------
 # ArUco / camera intrinsics
 # ---------------------------------------------------------------------------
-ARUCO_DICT = cv2.aruco.DICT_4X4_50
-MARKER_SIZE_M = 0.05  # TODO: must match the physical markers on the wall
+ARUCO_DICT = cv2.aruco.DICT_4X4_1000
+MARKER_SIZE_M = 0.175  # TODO: must match the physical markers on the wall
 
 # Per-camera calibration produced by calibration/calibration.py
 # (np.savez with camera_matrix + dist_coeffs). Filename must be the upper-case
@@ -59,16 +64,27 @@ PICAM_HEIGHT = 600
 
 # ---------------------------------------------------------------------------
 # Camera extrinsics: where each camera is mounted relative to the robot's
-# body-frame origin. translation_m = (x, y, z) forward/left/up in meters,
-# rpy_deg = (roll, pitch, yaw) in degrees, yaw measured counter-clockwise
-# from the robot's forward axis.
-# TODO: measure your actual rig and update these.
+# body-frame origin. This is Y-up (see geometry.py's module docstring):
+# translation_m = (x, y, z) = forward/up/right in meters, rpy_deg = (roll,
+# pitch, yaw) in degrees, yaw measured about the up (Y) axis, positive =
+# counter-clockwise from the robot's forward axis (i.e. toward the left).
+#
+# Rig: a cube with one camera centered on each of 4 side faces, all at the
+# same height as the reference point (the cube's center) -- so every camera's
+# Y (up) offset is 0. FRONT/LEFT/RIGHT are named relative to PICAM, which is
+# mounted on the REAR face -- so PICAM sits half a side-length *behind*
+# center, facing backward (yaw 180 deg), not at the origin facing forward
+# like a generic default would assume.
+# TODO: confirm CUBE_SIDE_M is actually in meters for your rig.
 # ---------------------------------------------------------------------------
+CUBE_SIDE_M = 0.10  # 10x10 cube face -- assumed centimeters (10cm side)
+CUBE_HALF_SIDE_M = CUBE_SIDE_M / 2.0
+
 CAMERA_EXTRINSICS_RAW = {
-    "FRONT": {"translation_m": (0.0, 0.0, 0.0), "rpy_deg": (0.0, 0.0, 0.0)},
-    "LEFT":  {"translation_m": (0.0, 0.0, 0.0), "rpy_deg": (0.0, 0.0, 90.0)},
-    "RIGHT": {"translation_m": (0.0, 0.0, 0.0), "rpy_deg": (0.0, 0.0, -90.0)},
-    "PICAM": {"translation_m": (0.0, 0.0, 0.0), "rpy_deg": (0.0, 0.0, 0.0)},
+    "FRONT": {"translation_m": (CUBE_HALF_SIDE_M, 0.0, 0.0), "rpy_deg": (0.0, 0.0, 0.0)},
+    "LEFT":  {"translation_m": (0.0, 0.0, -CUBE_HALF_SIDE_M), "rpy_deg": (0.0, 0.0, 90.0)},
+    "RIGHT": {"translation_m": (0.0, 0.0, CUBE_HALF_SIDE_M), "rpy_deg": (0.0, 0.0, -90.0)},
+    "PICAM": {"translation_m": (-CUBE_HALF_SIDE_M, 0.0, 0.0), "rpy_deg": (0.0, 0.0, 180.0)},
 }
 
 # Sampling order. CameraManager.available_cameras() decides what's actually

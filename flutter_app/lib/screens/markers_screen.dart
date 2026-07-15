@@ -152,11 +152,24 @@ class _MarkerTile extends StatelessWidget {
         ),
       ),
       title: Text('Marker ${marker.markerId}'),
-      subtitle: Text(
-        'X: ${marker.x.toStringAsFixed(3)}  '
-        'Y: ${marker.y.toStringAsFixed(3)}  '
-        'Z: ${marker.z.toStringAsFixed(3)}',
-        style: const TextStyle(fontFamily: 'monospace'),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'X: ${marker.x.toStringAsFixed(3)}  '
+            'Y: ${marker.y.toStringAsFixed(3)}  '
+            'Z: ${marker.z.toStringAsFixed(3)}',
+            style: const TextStyle(fontFamily: 'monospace'),
+          ),
+          if (marker.rollDeg != 0 || marker.pitchDeg != 0 || marker.yawDeg != 0)
+            Text(
+              'R: ${marker.rollDeg.toStringAsFixed(1)}°  '
+              'P: ${marker.pitchDeg.toStringAsFixed(1)}°  '
+              'Y: ${marker.yawDeg.toStringAsFixed(1)}°',
+              style: const TextStyle(fontFamily: 'monospace'),
+            ),
+        ],
       ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,

@@ -19,6 +19,9 @@ class _AddEditMarkerScreenState extends State<AddEditMarkerScreen> {
   late final TextEditingController _xCtrl;
   late final TextEditingController _yCtrl;
   late final TextEditingController _zCtrl;
+  late final TextEditingController _rollCtrl;
+  late final TextEditingController _pitchCtrl;
+  late final TextEditingController _yawCtrl;
 
   bool get _isEditing => widget.existing != null;
 
@@ -30,6 +33,9 @@ class _AddEditMarkerScreenState extends State<AddEditMarkerScreen> {
     _xCtrl = TextEditingController(text: m != null ? '${m.x}' : '');
     _yCtrl = TextEditingController(text: m != null ? '${m.y}' : '');
     _zCtrl = TextEditingController(text: m != null ? '${m.z}' : '');
+    _rollCtrl = TextEditingController(text: '${m?.rollDeg ?? 0.0}');
+    _pitchCtrl = TextEditingController(text: '${m?.pitchDeg ?? 0.0}');
+    _yawCtrl = TextEditingController(text: '${m?.yawDeg ?? 0.0}');
   }
 
   @override
@@ -38,6 +44,9 @@ class _AddEditMarkerScreenState extends State<AddEditMarkerScreen> {
     _xCtrl.dispose();
     _yCtrl.dispose();
     _zCtrl.dispose();
+    _rollCtrl.dispose();
+    _pitchCtrl.dispose();
+    _yawCtrl.dispose();
     super.dispose();
   }
 
@@ -49,6 +58,9 @@ class _AddEditMarkerScreenState extends State<AddEditMarkerScreen> {
     final x = double.parse(_xCtrl.text.trim());
     final y = double.parse(_yCtrl.text.trim());
     final z = double.parse(_zCtrl.text.trim());
+    final roll = double.parse(_rollCtrl.text.trim());
+    final pitch = double.parse(_pitchCtrl.text.trim());
+    final yaw = double.parse(_yawCtrl.text.trim());
 
     if (!_isEditing && provider.hasId(markerId)) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -60,7 +72,15 @@ class _AddEditMarkerScreenState extends State<AddEditMarkerScreen> {
       return;
     }
 
-    final marker = ArucoMarker(markerId: markerId, x: x, y: y, z: z);
+    final marker = ArucoMarker(
+      markerId: markerId,
+      x: x,
+      y: y,
+      z: z,
+      rollDeg: roll,
+      pitchDeg: pitch,
+      yawDeg: yaw,
+    );
     provider.addOrUpdateMarker(marker);
     Navigator.of(context).pop();
   }
@@ -103,31 +123,71 @@ class _AddEditMarkerScreenState extends State<AddEditMarkerScreen> {
               validator: _validateId,
               keyboardType: TextInputType.number,
             ),
+            const SizedBox(height: 4),
+            Text(
+              'The room\'s (0, 0, 0) is its center, so most markers will need '
+              'negative X or Z -- tap the +/- button to flip the sign.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+            ),
             const SizedBox(height: 16),
-            _buildSectionLabel(context, 'Position (meters)'),
+            _buildSectionLabel(context, 'Position (meters, Y is up)'),
             const SizedBox(height: 12),
             _CoordField(
               controller: _xCtrl,
               label: 'X',
-              hint: 'e.g. 1.50',
+              hint: 'e.g. -1.50',
               icon: Icons.arrow_right_alt,
               validator: _validateDouble,
+              allowNegative: true,
             ),
             const SizedBox(height: 12),
             _CoordField(
               controller: _yCtrl,
-              label: 'Y',
+              label: 'Y (up)',
               hint: 'e.g. 0.00',
               icon: Icons.arrow_upward,
               validator: _validateDouble,
+              allowNegative: true,
             ),
             const SizedBox(height: 12),
             _CoordField(
               controller: _zCtrl,
               label: 'Z',
               hint: 'e.g. 2.40',
-              icon: Icons.height,
+              icon: Icons.swap_horiz,
               validator: _validateDouble,
+              allowNegative: true,
+            ),
+            const SizedBox(height: 24),
+            _buildSectionLabel(context, 'Orientation (degrees, which way the marker faces)'),
+            const SizedBox(height: 12),
+            _CoordField(
+              controller: _rollCtrl,
+              label: 'Roll',
+              hint: 'e.g. 0',
+              icon: Icons.screen_rotation_outlined,
+              validator: _validateDouble,
+              allowNegative: true,
+            ),
+            const SizedBox(height: 12),
+            _CoordField(
+              controller: _pitchCtrl,
+              label: 'Pitch',
+              hint: 'e.g. 0',
+              icon: Icons.sync_alt,
+              validator: _validateDouble,
+              allowNegative: true,
+            ),
+            const SizedBox(height: 12),
+            _CoordField(
+              controller: _yawCtrl,
+              label: 'Yaw',
+              hint: 'e.g. 0',
+              icon: Icons.explore_outlined,
+              validator: _validateDouble,
+              allowNegative: true,
             ),
             const SizedBox(height: 32),
             FilledButton.icon(
@@ -160,6 +220,7 @@ class _CoordField extends StatelessWidget {
   final bool readOnly;
   final List<TextInputFormatter>? inputFormatters;
   final TextInputType keyboardType;
+  final bool allowNegative;
 
   const _CoordField({
     required this.controller,
@@ -170,20 +231,44 @@ class _CoordField extends StatelessWidget {
     this.readOnly = false,
     this.inputFormatters,
     this.keyboardType = const TextInputType.numberWithOptions(decimal: true, signed: true),
+    this.allowNegative = false,
   });
+
+  void _toggleSign() {
+    final text = controller.text.trim();
+    if (text.startsWith('-')) {
+      controller.text = text.substring(1);
+    } else {
+      controller.text = '-$text';
+    }
+    controller.selection = TextSelection.collapsed(offset: controller.text.length);
+  }
 
   @override
   Widget build(BuildContext context) {
+    // Many Android keyboards hide the "-" key for numeric inputs regardless
+    // of the `signed` flag, so negative values need an explicit toggle
+    // rather than relying on the OS keyboard to offer one.
     return TextFormField(
       controller: controller,
       readOnly: readOnly,
       keyboardType: keyboardType,
-      inputFormatters: inputFormatters,
+      inputFormatters: inputFormatters ??
+          (allowNegative
+              ? [FilteringTextInputFormatter.allow(RegExp(r'[0-9.\-]'))]
+              : null),
       validator: validator,
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
         prefixIcon: Icon(icon),
+        suffixIcon: allowNegative && !readOnly
+            ? IconButton(
+                tooltip: 'Toggle +/-',
+                icon: const Text('+/-', style: TextStyle(fontWeight: FontWeight.bold)),
+                onPressed: _toggleSign,
+              )
+            : null,
         border: const OutlineInputBorder(),
         filled: readOnly,
       ),

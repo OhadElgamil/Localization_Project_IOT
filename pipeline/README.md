@@ -45,13 +45,30 @@ The built-in Pi camera is captured separately (`picamera2`, falling back to
 `rpicam-still`/`libcamera-still`, falling back to `cv2.VideoCapture(0)` for dev machines)
 and exposed under the name `PICAM`.
 
+## Coordinate convention (Y-up)
+
+The whole pipeline, the marker map, and the Flutter app all use the **same Y-up, right-handed
+frame**, matching the project's OptiTrack ground truth: **X = forward, Y = up, Z = right**.
+Euler angles are `(roll, pitch, yaw)` in degrees: **roll** about X (forward), **pitch** about Z
+(right), **yaw** about Y (up) — yaw is the compass-heading rotation, positive = counter-clockwise
+from forward (rotates forward toward -Z / left). See `geometry.py`'s module docstring for the
+exact math. If you ever add a new coordinate producer (a different mocap system, a different
+app), it must use this same convention or positions/orientations will silently be wrong in a
+way that can look like "garbage" without being an outright crash.
+
 ## Things you must configure before trusting the output
 
 - **`config.MARKER_SIZE_M`** — must match the physical size of the printed markers.
 - **`config.CAMERA_EXTRINSICS_RAW`** — where each camera is physically mounted relative to
-  the robot's own origin (translation in meters + roll/pitch/yaw in degrees). Defaults
-  assume all four cameras sit at the robot's center, with Left/Right rotated ±90°. Measure
-  your actual rig and update these, or multi-camera fusion will be systematically biased.
+  the robot's own origin (translation in meters + roll/pitch/yaw in degrees, Y-up convention
+  above). Measure your actual rig and update these, or multi-camera fusion will be
+  systematically biased.
+- **Per-marker orientation** — each marker in the app now has roll/pitch/yaw fields (degrees,
+  same convention) in addition to x/y/z, defaulting to 0. If two markers are mounted facing
+  different directions (e.g. on different walls) and their orientation isn't set correctly,
+  fusing detections from both will be wrong — this was the #1 suspect for "garbage" 2-marker
+  results before orientation support existed, since the pipeline previously had no choice but
+  to assume every marker faced the same way.
 - **Per-camera intrinsics** — run `calibration/calibration.py` for each camera and drop the
   resulting `.npz` (with `camera_matrix` + `dist_coeffs`) into `pipeline/calibration_data/`
   as `FRONT.npz`, `LEFT.npz`, `RIGHT.npz`, `PICAM.npz`. Any camera without a file falls back
@@ -60,20 +77,37 @@ and exposed under the name `PICAM`.
 ## Marker map
 
 Markers are defined by the Android app and stored at `flutter_app/pi_server/markers.json`
-(the Flask server writes this file when the app calibrates). The pipeline reads that same
-file directly and reloads it whenever it changes — no HTTP dependency, so it keeps working
-even if the Flask server is down.
+(the Flask server writes this file when the app calibrates). Each entry is
+`{id, x, y, z, roll_deg, pitch_deg, yaw_deg}` — the `*_deg` fields are optional and default to
+0 for markers saved before orientation support existed. The pipeline reads the file directly
+and reloads it whenever it changes — no HTTP dependency, so it keeps working even if the Flask
+server is down.
 
 ## Localization strategy
 
-- **1 known marker seen** → direct 6DOF pose from that marker's PnP solve (distance +
-  full roll/pitch/yaw orientation).
+- **1 known marker seen** → direct 6DOF pose from that marker's PnP solve, rotated by the
+  marker's own orientation from the map (distance + full roll/pitch/yaw).
 - **2 known markers seen** → the two measured distances put the robot on a circle (the
   intersection of two spheres centered on the markers); the point on that circle closest
   to the orientation-informed pose estimate is picked ("half triangulation" + orientation
   disambiguation).
 - **3+ known markers seen** → full least-squares multilateration on the measured distances,
   with orientation as the confidence-weighted circular mean of each marker's PnP orientation.
+
+In all three cases, each marker's contribution is computed as `T_global_marker @ T_marker_cam`
+(marker's own global pose composed with the camera's pose in that marker's local frame), not a
+naive translation — so markers facing different directions fuse correctly as long as their
+orientation is set in the map.
+
+## Debug logging
+
+`config.LOG_LEVEL = "DEBUG"` (the default) logs, every cycle: raw marker IDs seen per camera,
+each marker's distance/tvec/rvec, the marker-map lookup used, each per-marker candidate robot
+pose, which fusion path ran and its intermediates, the final result, and the exact JSON POSTed
+to Flask. Drop it to `"INFO"` for quieter day-to-day running once things check out. Watch
+specifically for `independent single-marker pose disagreement` in the 2-marker path — if two
+markers give wildly different independent position estimates, check `MARKER_SIZE_M`, each
+marker's position/orientation in the map, and the camera extrinsics, in that order.
 
 ## Cross-repo changes made alongside this rewrite (and why)
 

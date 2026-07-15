@@ -17,8 +17,9 @@ from localization import LocalizationEngine
 from api_client import ApiClient
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    level=getattr(logging, config.LOG_LEVEL),
+    format="%(asctime)s.%(msecs)03d [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("pipeline")
 
@@ -32,22 +33,31 @@ def run():
     engine = LocalizationEngine(config)
     api = ApiClient(config.API_BASE_URL)
 
-    logger.info("Pipeline running. Waiting for cameras to connect...")
+    logger.info("Pipeline running (log level=%s). Waiting for cameras to connect...", config.LOG_LEVEL)
 
+    cycle = 0
     with ThreadPoolExecutor(max_workers=4) as pool:
         try:
             while True:
                 available = set(camera_manager.available_cameras())
                 names = [n for n in config.CAMERA_SAMPLE_ORDER if n in available]
                 if not names:
+                    logger.debug("No cameras available yet (configured order: %s)", config.CAMERA_SAMPLE_ORDER)
                     time.sleep(0.5)
                     continue
 
+                cycle += 1
                 marker_map.reload()
 
                 # SNAP round trips are independent I/O waits, so sample every
                 # reachable camera concurrently instead of paying N x latency.
                 frames = dict(zip(names, pool.map(camera_manager.sample, names)))
+                logger.debug(
+                    "cycle %d: sampled %s -> %s",
+                    cycle, names,
+                    {n: ("frame %dx%d" % (f.shape[1], f.shape[0])) if f is not None else "NO FRAME"
+                     for n, f in frames.items()},
+                )
 
                 detections = []
                 for name, frame in frames.items():
@@ -58,12 +68,6 @@ def run():
                 result = engine.estimate(detections, marker_map)
                 if result is not None:
                     api.post_localization(result)
-                    logger.info(
-                        "pos=(%.2f, %.2f, %.2f) yaw=%.1f deg markers=%d %s conf=%.2f",
-                        result.position[0], result.position[1], result.position[2],
-                        (result.orientation[2] * 180.0 / 3.14159265),
-                        result.markers_detected, result.marker_ids, result.confidence,
-                    )
 
                 time.sleep(config.CYCLE_SLEEP_S)
         except KeyboardInterrupt:
