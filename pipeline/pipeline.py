@@ -58,11 +58,12 @@ def run():
                         if frame is not None:
                             detections.extend(detector.detect(name, frame))
 
-            logger.debug("cycle %d: cameras=%s detections=%d", cycle, names, len(detections))
+            camera_times = camera_manager.response_times()
+            logger.debug("cycle %d: cameras=%s detections=%d times=%s", cycle, names, len(detections), camera_times)
 
             result = localization.estimate(detections, marker_map, config.T_CAM_ROBOT,
                                             max_markers=config.MAX_TRIANGULATION_MARKERS)
-            api.post_localization(result)  # unconditional: success or error, every cycle
+            api.post_localization(result, camera_response_times=camera_times)  # unconditional: success or error, every cycle
 
             time.sleep(config.CYCLE_SLEEP_S)
     except KeyboardInterrupt:

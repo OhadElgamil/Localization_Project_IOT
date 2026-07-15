@@ -25,6 +25,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
   // exactly when localization is failing and you're trying to see why.
   int? _markersSeen;
   List<int> _markerIds = const [];
+  Map<String, double?> _cameraTimes = const {};
   // Guards against overlapping requests: at a 150ms poll interval, a single
   // slow HTTP round trip (network hiccup, server hang) could otherwise let
   // ticks pile up into a growing backlog of concurrent requests.
@@ -63,11 +64,13 @@ class _MonitorScreenState extends State<MonitorScreen> {
           _statusMessage = result.error;
           _markersSeen = result.markersDetected;
           _markerIds = result.markerIds;
+          _cameraTimes = result.cameraResponseTimes;
         } else {
           _statusMessage = null;
           _lastGoodResult = result;
           _markersSeen = result.markersDetected;
           _markerIds = result.markerIds;
+          _cameraTimes = result.cameraResponseTimes;
         }
       });
     } catch (e) {
@@ -113,6 +116,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
             lastUpdate: _lastGoodResult?.timestamp,
           ),
           _MarkersSeenBar(count: _markersSeen, ids: _markerIds),
+          _CameraTimingsBar(times: _cameraTimes),
           // Once we have a last-known location, keep it on screen -- a lost
           // connection or a transient "too few markers" reading only shows a
           // thin banner, it never blanks out the display.
@@ -248,6 +252,64 @@ class _MarkersSeenBar extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+class _CameraTimingsBar extends StatelessWidget {
+  final Map<String, double?> times;
+
+  const _CameraTimingsBar({required this.times});
+
+  @override
+  Widget build(BuildContext context) {
+    if (times.isEmpty) return const SizedBox.shrink();
+    final cs = Theme.of(context).colorScheme;
+    final names = times.keys.toList()..sort();
+
+    return Container(
+      width: double.infinity,
+      color: cs.surfaceVariant.withOpacity(0.25),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Wrap(
+        spacing: 14,
+        runSpacing: 4,
+        children: [
+          for (final name in names) _CameraTimingLabel(name: name, seconds: times[name]),
+        ],
+      ),
+    );
+  }
+}
+
+class _CameraTimingLabel extends StatelessWidget {
+  final String name;
+  // Most recently *completed* round trip for this camera. Null means it
+  // hasn't answered yet this cycle -- still catching up, not disconnected
+  // (see camera_link.py: a slow camera is skipped, never kicked).
+  final double? seconds;
+
+  const _CameraTimingLabel({required this.name, required this.seconds});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final responded = seconds != null;
+    final text = responded
+        ? '$name ${(seconds! * 1000).toStringAsFixed(0)} ms'
+        : '$name waiting…';
+    final color = responded ? cs.onSurfaceVariant : cs.error;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          responded ? Icons.camera_alt_outlined : Icons.hourglass_empty,
+          size: 13,
+          color: color,
+        ),
+        const SizedBox(width: 4),
+        Text(text, style: TextStyle(fontSize: 12, color: color)),
+      ],
     );
   }
 }

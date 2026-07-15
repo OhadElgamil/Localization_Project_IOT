@@ -37,34 +37,94 @@ class EspCameraLink:
         self.name = name
         self.addr = addr
         self._conn = conn
-        self._rfile = conn.makefile("rb")
         self._lock = threading.Lock()
         self.connected = True
+        # Bytes read from the socket but not yet consumed by a readline/
+        # read_exact call. Deliberately NOT using conn.makefile(): once a
+        # socket.makefile()'s buffered reader hits a single socket.timeout,
+        # Python permanently poisons it ("cannot read from timed out
+        # object") for every read after that, even though the raw socket is
+        # completely fine -- reading via plain recv() into our own buffer
+        # sidesteps that entirely, and as a bonus preserves any partial line
+        # or partial JPEG bytes across a timed-out call instead of losing them.
+        self._recv_buf = bytearray()
+        # A SNAP was sent but its response hasn't been fully read yet (the
+        # previous snap() call timed out mid-read). The camera answers
+        # requests strictly in order, so the next call must resume reading
+        # THIS response instead of sending a second SNAP on top of it --
+        # otherwise the two responses queue up back-to-back on the wire and
+        # every read after that is permanently misaligned.
+        self._awaiting_response = False
+        self._sent_at = None
+        self._pending_len = None  # size line already parsed, still waiting on the body
+        self.last_response_time_s = None  # most recently *completed* round trip
+
+    def _recv_more(self, timeout):
+        remaining = timeout
+        if remaining <= 0:
+            raise socket.timeout()
+        self._conn.settimeout(remaining)
+        chunk = self._conn.recv(65536)
+        if not chunk:
+            raise ConnectionError("camera closed the connection")
+        self._recv_buf += chunk
+
+    def _readline(self, deadline):
+        while b"\n" not in self._recv_buf:
+            self._recv_more(deadline - time.monotonic())
+        idx = self._recv_buf.index(b"\n")
+        line = bytes(self._recv_buf[:idx])
+        del self._recv_buf[:idx + 1]
+        return line
+
+    def _read_exact(self, n, deadline):
+        while len(self._recv_buf) < n:
+            self._recv_more(deadline - time.monotonic())
+        data = bytes(self._recv_buf[:n])
+        del self._recv_buf[:n]
+        return data
 
     def snap(self, timeout=3.0):
-        """Request one fresh frame. Returns a BGR np.ndarray, or None on failure."""
+        """Request one fresh frame (or resume waiting on one already in
+        flight). Returns a BGR np.ndarray, or None if no frame is ready yet.
+        A slow/unresponsive camera is skipped for this cycle, not
+        disconnected -- only a real protocol/connection error drops the
+        link; a plain timeout never does."""
         with self._lock:
             if not self.connected:
                 return None
+            deadline = time.monotonic() + timeout
             try:
-                self._conn.settimeout(timeout)
-                self._conn.sendall(b"SNAP\n")
+                if not self._awaiting_response:
+                    self._sent_at = time.monotonic()
+                    self._conn.settimeout(timeout)
+                    self._conn.sendall(b"SNAP\n")
+                    self._awaiting_response = True
 
-                size_line = self._rfile.readline()
-                if not size_line:
-                    raise ConnectionError("camera closed the connection")
-                image_len = int(size_line.decode("ascii", errors="ignore").strip())
+                if self._pending_len is None:
+                    size_line = self._readline(deadline)
+                    self._pending_len = int(size_line.decode("ascii", errors="ignore").strip())
 
-                data = self._rfile.read(image_len)
-                if data is None or len(data) != image_len:
-                    raise ConnectionError("incomplete image payload")
+                data = self._read_exact(self._pending_len, deadline)
+
+                self._awaiting_response = False
+                self._pending_len = None
+                self.last_response_time_s = time.monotonic() - self._sent_at
 
                 arr = np.frombuffer(data, dtype=np.uint8)
                 frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                 if frame is None:
                     raise ConnectionError("JPEG decode failed")
                 return frame
-            except (socket.timeout, socket.error, ValueError, ConnectionError) as e:
+            except socket.timeout:
+                # Still catching up -- _awaiting_response (and _pending_len,
+                # if we'd already parsed the size line) stay set so the next
+                # call resumes reading this same response. Connection stays
+                # open, camera stays in the sampling rotation.
+                logger.debug("[%s] snap still waiting (%.2fs elapsed so far)",
+                             self.name, time.monotonic() - self._sent_at)
+                return None
+            except (socket.error, ValueError, ConnectionError) as e:
                 logger.warning("[%s] snap failed, dropping connection: %s", self.name, e)
                 self._close_locked()
                 return None
@@ -92,6 +152,7 @@ class CameraManager:
 
         self._picam = None
         self._picam_mode = None  # "picamera2" | "subprocess" | "cv2" | None
+        self._picam_response_time_s = None
         self._init_local_camera()
 
     # -- ESP32-CAM TCP server -------------------------------------------------
@@ -245,9 +306,25 @@ class CameraManager:
         """Return one frame from the named camera, or None if unavailable/failed."""
         name = name.upper()
         if name == "PICAM":
-            return self._capture_local()
+            start = time.monotonic()
+            frame = self._capture_local()
+            self._picam_response_time_s = (time.monotonic() - start) if frame is not None else None
+            return frame
         with self._links_lock:
             link = self._links.get(name)
         if link is None or not link.connected:
             return None
         return link.snap(timeout=timeout or self.config.SNAP_TIMEOUT_S)
+
+    def response_times(self):
+        """Most recent completed sample round-trip time (seconds) per camera
+        name currently in the rotation. None means no completed sample yet
+        -- never responded, or its current request is still in flight."""
+        times = {}
+        with self._links_lock:
+            for name, link in self._links.items():
+                if link.connected:
+                    times[name] = link.last_response_time_s
+        if self._picam_mode is not None:
+            times["PICAM"] = self._picam_response_time_s
+        return times

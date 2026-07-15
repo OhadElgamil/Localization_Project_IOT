@@ -12,13 +12,18 @@ class ApiClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def post_localization(self, result):
+    def post_localization(self, result, camera_response_times=None):
         marker_ids = [int(mid) for mid in result.marker_ids]
+        camera_times = {
+            name: (float(t) if t is not None else None)
+            for name, t in (camera_response_times or {}).items()
+        }
         if result.error is not None:
             payload = {
                 "error": result.error,
                 "markers_detected": int(result.markers_detected),
                 "marker_ids": marker_ids,
+                "camera_response_times_s": camera_times,
             }
         else:
             roll, pitch, yaw = result.orientation
@@ -32,6 +37,7 @@ class ApiClient:
                 "confidence": float(result.confidence),
                 "markers_detected": int(result.markers_detected),
                 "marker_ids": marker_ids,
+                "camera_response_times_s": camera_times,
                 "error": None,
             }
 

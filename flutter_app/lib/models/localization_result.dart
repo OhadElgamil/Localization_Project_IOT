@@ -7,6 +7,10 @@ class LocalizationResult {
   final DateTime timestamp;
   final int markersDetected;
   final List<int> markerIds;
+  // Most recent completed SNAP round-trip time per camera name, in seconds.
+  // A missing entry or null value means that camera hasn't responded yet
+  // this cycle (still in flight) -- it's not disconnected, just slow.
+  final Map<String, double?> cameraResponseTimes;
   // Set when the Pi couldn't compute a position this cycle (e.g. fewer than
   // 3 barcodes visible) -- x/y/z/yaw are meaningless (zeroed) when this is set.
   final String? error;
@@ -20,12 +24,14 @@ class LocalizationResult {
     required this.timestamp,
     required this.markersDetected,
     this.markerIds = const [],
+    this.cameraResponseTimes = const {},
     this.error,
   });
 
   factory LocalizationResult.fromJson(Map<String, dynamic> json) {
     final pos = json['position'] as Map<String, dynamic>?;
     final orient = json['orientation'] as Map<String, dynamic>?;
+    final times = json['camera_response_times_s'] as Map<String, dynamic>?;
     return LocalizationResult(
       x: (pos?['x'] as num? ?? 0).toDouble(),
       y: (pos?['y'] as num? ?? 0).toDouble(),
@@ -39,6 +45,8 @@ class LocalizationResult {
       markerIds: (json['marker_ids'] as List<dynamic>? ?? const [])
           .map((e) => (e as num).toInt())
           .toList(),
+      cameraResponseTimes: (times ?? const {})
+          .map((name, v) => MapEntry(name, (v as num?)?.toDouble())),
       error: json['error'] as String?,
     );
   }
