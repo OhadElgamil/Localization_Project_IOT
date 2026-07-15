@@ -8,6 +8,7 @@ README.md for the wire protocol and setup notes.
 """
 import logging
 import time
+import concurrent.futures
 
 import config
 from camera_link import CameraManager
@@ -43,13 +44,19 @@ def run():
             cycle += 1
             marker_map.reload()
 
-            # Sequential on purpose: correctness first, concurrency later.
+            # Concurrent sampling to minimize network latency
             detections = []
-            for name in names:
-                frame = camera_manager.sample(name)
-                if frame is None:
-                    continue
-                detections.extend(detector.detect(name, frame))
+            if names:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(names)) as executor:
+                    # Fire all SNAP requests simultaneously
+                    future_to_name = {executor.submit(camera_manager.sample, name): name for name in names}
+                    
+                    # As each camera responds, run the ArUco detection
+                    for future in concurrent.futures.as_completed(future_to_name):
+                        name = future_to_name[future]
+                        frame = future.result()
+                        if frame is not None:
+                            detections.extend(detector.detect(name, frame))
 
             logger.debug("cycle %d: cameras=%s detections=%d", cycle, names, len(detections))
 
