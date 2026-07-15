@@ -13,8 +13,11 @@ class MonitorScreen extends StatefulWidget {
 
 class _MonitorScreenState extends State<MonitorScreen> {
   Timer? _timer;
-  LocalizationResult? _result;
-  String? _error;
+  // Only ever updated with a fully valid (non-error) result, so the display
+  // never flickers back to a blank/error screen on a transient hiccup -- we
+  // just keep showing the last known good location.
+  LocalizationResult? _lastGoodResult;
+  String? _statusMessage;
   bool _isPolling = false;
 
   static const _pollInterval = Duration(seconds: 1);
@@ -35,20 +38,25 @@ class _MonitorScreenState extends State<MonitorScreen> {
   Future<void> _poll() async {
     final conn = context.read<ConnectionProvider>();
     if (!conn.isConnected) {
-      setState(() => _error = 'Not connected to Pi.');
+      if (mounted) setState(() => _statusMessage = 'Not connected to Pi.');
       return;
     }
     try {
       final result = await conn.service.getLocalization();
-      if (mounted) {
-        setState(() {
-          _result = result;
-          _error = result == null ? 'No localization data available yet.' : result.error;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        if (result == null) {
+          _statusMessage = 'No localization data available yet.';
+        } else if (result.error != null) {
+          _statusMessage = result.error;
+        } else {
+          _statusMessage = null;
+          _lastGoodResult = result;
+        }
+      });
     } catch (e) {
       if (mounted) {
-        setState(() => _error = '$e');
+        setState(() => _statusMessage = '$e');
       }
     }
   }
@@ -84,18 +92,23 @@ class _MonitorScreenState extends State<MonitorScreen> {
           _PollingStatusBar(
             isPolling: _isPolling,
             isConnected: conn.isConnected,
-            lastUpdate: _result?.timestamp,
+            lastUpdate: _lastGoodResult?.timestamp,
           ),
+          // Once we have a last-known location, keep it on screen -- a lost
+          // connection or a transient "too few markers" reading only shows a
+          // thin banner, it never blanks out the display.
+          if (_lastGoodResult != null && _statusMessage != null)
+            _StaleBanner(message: _statusMessage!),
           Expanded(
-            child: _error != null
-                ? _ErrorState(message: _error!)
-                : _result == null
-                    ? _IdleState(
+            child: _lastGoodResult != null
+                ? _LocalizationDisplay(result: _lastGoodResult!)
+                : _statusMessage != null
+                    ? _ErrorState(message: _statusMessage!)
+                    : _IdleState(
                         isConnected: conn.isConnected,
                         isPolling: _isPolling,
                         onStart: conn.isConnected ? _startPolling : null,
-                      )
-                    : _LocalizationDisplay(result: _result!),
+                      ),
           ),
         ],
       ),
@@ -166,6 +179,32 @@ class _PollingStatusBar extends StatelessWidget {
     return '${local.hour.toString().padLeft(2, '0')}:'
         '${local.minute.toString().padLeft(2, '0')}:'
         '${local.second.toString().padLeft(2, '0')}';
+  }
+}
+
+class _StaleBanner extends StatelessWidget {
+  final String message;
+  const _StaleBanner({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      color: Colors.amber.withOpacity(0.25),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, size: 16, color: Colors.amber),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '$message Showing last known location.',
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
