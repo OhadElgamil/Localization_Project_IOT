@@ -114,20 +114,57 @@ def select_closest(candidates, k=MAX_MARKERS):
     return sorted(candidates, key=lambda c: c.distance_m)[:k]
 
 
-def fuse(candidates):
-    """Least-squares trilateration + orientation fusion over `candidates`
-    (expected to be exactly TRIPLET_SIZE long)."""
+def fuse(candidates, use_huber=False, huber_delta=0.5):
+    """Least-squares trilateration + orientation fusion over `candidates`."""
     marker_ids = [c.marker_id for c in candidates]
     positions = [c.marker_position for c in candidates]
     robot_distances = [c.robot_distance_m for c in candidates]
     poses = [c.T_global_robot for c in candidates]
 
-    initial_guess = np.mean([T[:3, 3] for T in poses], axis=0)
-    position = multilaterate(positions, robot_distances, initial_guess)
+    initial_guess_base = np.mean([T[:3, 3] for T in poses], axis=0)
+    
+    # --- MULTI-START OPTIMIZATION (Commented out) ---
+    # We try the base guess, plus 6 offset guesses (1 meter in each axis direction).
+    # This uses slightly more CPU, but ensures we NEVER get stuck in a local minimum
+    # (which can cause random max-error spikes in clean trials).
+    # guesses = [initial_guess_base]
+    # for dx, dy, dz in [(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)]:
+    #     guesses.append(initial_guess_base + np.array([dx, dy, dz]))
+    #
+    # best_position = None
+    # best_residual = float('inf')
+    #
+    # for guess in guesses:
+    #     pos = multilaterate(
+    #         positions, robot_distances, guess, 
+    #         use_huber=use_huber, huber_delta=huber_delta
+    #     )
+    #     ranges = np.linalg.norm(pos - np.asarray(positions), axis=1)
+    #     res = float(np.mean(np.abs(ranges - np.asarray(robot_distances))))
+    #     
+    #     if res < best_residual:
+    #         best_residual = res
+    #         best_position = pos
+    #
+    # position = best_position
+    # residual = best_residual
+    # ------------------------------------------------
 
+    position = multilaterate(
+        positions, robot_distances, initial_guess_base, 
+        use_huber=use_huber, huber_delta=huber_delta
+    )
     ranges = np.linalg.norm(position - np.asarray(positions), axis=1)
     residual = float(np.mean(np.abs(ranges - np.asarray(robot_distances))))
-    confidence = float(np.clip(0.95 - 0.5 * residual, 0.3, 0.95))
+    
+    # Base confidence purely on residuals (how well the math agrees)
+    base_confidence = 0.95 - (1.0 * residual) # drops fast with error
+    
+    # Penalize confidence if we have very few markers (less redundancy)
+    # 6+ markers = no penalty. 3 markers = 0.15 penalty
+    marker_penalty = max(0.0, 0.05 * (6 - len(candidates)))
+    
+    confidence = float(np.clip(base_confidence - marker_penalty, 0.1, 0.99))
 
     # Weighting for orientation fusion uses raw camera-measured distance
     # (sensor-quality proxy: closer/larger-in-frame markers give sharper
@@ -139,7 +176,7 @@ def fuse(candidates):
     logger.debug(
         "path=TRILATERATION markers=%s initial_guess=%s -> pos=%s "
         "range residual=%.3fm (measured-vs-solved distance, should be small)",
-        marker_ids, _v(initial_guess, "m"), _v(position, "m"), residual,
+        marker_ids, _v(initial_guess_base, "m"), _v(position, "m"), residual,
     )
 
     return LocalizationResult(
@@ -175,9 +212,10 @@ def _combine_triplets(results):
     )
 
 
-def estimate(detections, marker_map, camera_extrinsics,
-             min_markers=MIN_MARKERS, max_markers=MAX_MARKERS):
-    """Always returns a LocalizationResult -- never None, never raises.
+def estimate_triplets(detections, marker_map, camera_extrinsics,
+                      min_markers=MIN_MARKERS, max_markers=MAX_MARKERS):
+    """Original strategy: trilaterate triplets and combine the results.
+    Always returns a LocalizationResult -- never None, never raises.
     Insufficient markers is an expected, frequent runtime state, not an
     exceptional one; `result.error` carries the reason when it applies."""
     candidates = build_candidates(detections, marker_map, camera_extrinsics)
@@ -199,6 +237,33 @@ def estimate(detections, marker_map, camera_extrinsics,
     logger.info(
         "FUSION RESULT: pool=%d triplets=%d ids=%s pos=%s %s conf=%.2f",
         len(pool), len(triplet_results), result.marker_ids,
+        _v(result.position, "m"), _rpy_deg(result.orientation), result.confidence,
+    )
+    return result
+
+
+def estimate_least_squares(detections, marker_map, camera_extrinsics,
+                           min_markers=MIN_MARKERS, max_markers=MAX_MARKERS, 
+                           use_huber=True, huber_delta=0.5):
+    """New strategy: single robust least-squares over all visible candidates."""
+    candidates = build_candidates(detections, marker_map, camera_extrinsics)
+
+    if len(candidates) < min_markers:
+        logger.info("Only %d known marker(s) seen this cycle (%s), need %d -> error",
+                     len(candidates), [c.marker_id for c in candidates], min_markers)
+        return LocalizationResult(
+            position=None, orientation=None, confidence=0.0,
+            markers_detected=len(candidates),
+            marker_ids=[c.marker_id for c in candidates],
+            error=INSUFFICIENT_MARKERS_ERROR,
+        )
+
+    pool = select_closest(candidates, max_markers)
+    result = fuse(pool, use_huber=use_huber, huber_delta=huber_delta)
+
+    logger.info(
+        "LEAST SQUARES RESULT: pool=%d ids=%s pos=%s %s conf=%.2f",
+        len(pool), result.marker_ids,
         _v(result.position, "m"), _rpy_deg(result.orientation), result.confidence,
     )
     return result

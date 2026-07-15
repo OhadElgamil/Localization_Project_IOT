@@ -93,7 +93,7 @@ def extrinsic_transform(translation_m, rpy_deg) -> np.ndarray:
     return homogeneous(R, np.asarray(translation_m, dtype=float))
 
 
-def multilaterate(positions, distances, initial_guess, iterations=50) -> np.ndarray:
+def multilaterate(positions, distances, initial_guess, iterations=50, use_huber=False, huber_delta=0.5) -> np.ndarray:
     """Levenberg-Marquardt solve for the point whose distance to each
     `positions[i]` best matches `distances[i]` in a least-squares sense.
 
@@ -119,16 +119,40 @@ def multilaterate(positions, distances, initial_guess, iterations=50) -> np.ndar
         ranges = np.where(ranges < 1e-9, 1e-9, ranges)
         return ranges - distances
 
+    def cost_at(r_at):
+        if use_huber:
+            abs_r = np.abs(r_at)
+            mask = abs_r > huber_delta
+            c = np.zeros_like(r_at)
+            c[~mask] = r_at[~mask]**2
+            c[mask] = 2.0 * huber_delta * abs_r[mask] - huber_delta**2
+            return float(np.sum(c))
+        else:
+            return float(r_at @ r_at)
+
     r = residuals_at(p)
-    cost = float(r @ r)
+    cost = cost_at(r)
 
     for _ in range(iterations):
         diffs = p - positions
         ranges = np.linalg.norm(diffs, axis=1)
         ranges = np.where(ranges < 1e-9, 1e-9, ranges)
         J = diffs / ranges[:, None]
-        JTJ = J.T @ J
-        JTr = J.T @ r
+
+        if use_huber:
+            weights = np.ones_like(r)
+            abs_r = np.abs(r)
+            mask = abs_r > huber_delta
+            weights[mask] = huber_delta / abs_r[mask]
+            
+            sqrt_w = np.sqrt(weights)
+            Jw = J * sqrt_w[:, None]
+            rw = r * sqrt_w
+            JTJ = Jw.T @ Jw
+            JTr = Jw.T @ rw
+        else:
+            JTJ = J.T @ J
+            JTr = J.T @ r
 
         step = None
         for _ in range(12):  # inner loop: grow damping until a step actually helps
@@ -139,7 +163,7 @@ def multilaterate(positions, distances, initial_guess, iterations=50) -> np.ndar
                 continue
             p_new = p + candidate_step
             r_new = residuals_at(p_new)
-            cost_new = float(r_new @ r_new)
+            cost_new = cost_at(r_new)
             if cost_new < cost:
                 step = candidate_step
                 p, r, cost = p_new, r_new, cost_new
