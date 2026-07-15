@@ -14,11 +14,12 @@ _localization_result: dict = {
     "orientation": None,
     "confidence": 0.0,
     "markers_detected": 0,
+    "marker_ids": [],
     "timestamp": datetime.now(timezone.utc).isoformat(),
     "error": "not enough barcodes detected",
 }
 
-def update_localization(x: float = None, y: float = None, z: float = None, yaw: float = 0.0, pitch: float = 0.0, roll: float = 0.0, confidence: float = 1.0, markers_detected: int = 0, error: str = None) -> None:
+def update_localization(x: float = None, y: float = None, z: float = None, yaw: float = 0.0, pitch: float = 0.0, roll: float = 0.0, confidence: float = 1.0, markers_detected: int = 0, marker_ids: list = None, error: str = None) -> None:
     if error is not None:
         position = None
         orientation = None
@@ -31,6 +32,7 @@ def update_localization(x: float = None, y: float = None, z: float = None, yaw: 
         "orientation": orientation,
         "confidence": confidence,
         "markers_detected": markers_detected,
+        "marker_ids": marker_ids or [],
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "error": error,
     })
@@ -73,14 +75,17 @@ def clear_markers():
 def get_localization():
     result = dict(_localization_result)
     try:
-        # If the pipeline itself hasn't reported anything in over a second
-        # (crashed, disconnected, never started), that's distinct from a
-        # normal "not enough barcodes this cycle" error the pipeline sends
-        # explicitly and immediately.
+        # If the pipeline itself hasn't reported anything in a while (crashed,
+        # disconnected, never started), that's distinct from a normal "not
+        # enough barcodes this cycle" error the pipeline sends explicitly and
+        # immediately. Threshold has headroom above a normal cycle (camera
+        # sampling now runs in parallel, see pipeline.py) so one slow camera
+        # doesn't cause a false "lost" flap.
         last_time = datetime.fromisoformat(result["timestamp"])
         time_since_update = (datetime.now(timezone.utc) - last_time).total_seconds()
-        if time_since_update > 1.0:
+        if time_since_update > 2.5:
             result["markers_detected"] = 0
+            result["marker_ids"] = []
             result["position"] = None
             result["orientation"] = None
             result["confidence"] = 0.0
@@ -94,10 +99,13 @@ def get_localization():
 def post_localization():
     data = request.get_json(force=True)
 
+    marker_ids = [int(mid) for mid in data.get("marker_ids", [])]
+
     if data.get("error"):
         update_localization(
             error=str(data["error"]),
             markers_detected=int(data.get("markers_detected", 0)),
+            marker_ids=marker_ids,
         )
         return jsonify({"success": True}), 201
 
@@ -113,6 +121,7 @@ def post_localization():
             roll=float(orientation.get("roll", 0.0)) if isinstance(orientation, dict) else float(data.get("roll", 0.0)),
             confidence=float(data.get("confidence", 1.0)),
             markers_detected=int(data.get("markers_detected", 0)),
+            marker_ids=marker_ids,
             error=None,
         )
     except (KeyError, TypeError, ValueError) as e:

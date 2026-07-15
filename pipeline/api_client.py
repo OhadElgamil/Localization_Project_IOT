@@ -13,8 +13,13 @@ class ApiClient:
         self.timeout = timeout
 
     def post_localization(self, result):
+        marker_ids = [int(mid) for mid in result.marker_ids]
         if result.error is not None:
-            payload = {"error": result.error, "markers_detected": int(result.markers_detected)}
+            payload = {
+                "error": result.error,
+                "markers_detected": int(result.markers_detected),
+                "marker_ids": marker_ids,
+            }
         else:
             roll, pitch, yaw = result.orientation
             payload = {
@@ -26,6 +31,7 @@ class ApiClient:
                 "roll": float(np.degrees(roll)),
                 "confidence": float(result.confidence),
                 "markers_detected": int(result.markers_detected),
+                "marker_ids": marker_ids,
                 "error": None,
             }
 

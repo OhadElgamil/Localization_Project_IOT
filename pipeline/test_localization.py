@@ -131,7 +131,7 @@ class TestTriangulation(unittest.TestCase):
         self.assertEqual(result.markers_detected, 3)
         assert_pose_close(self, result, true_pos, true_rpy_deg)
 
-    def test_more_than_three_uses_three_closest(self):
+    def test_pool_cap_excludes_far_markers(self):
         true_pos = (2.0, 0.5, -3.0)
         true_rpy_deg = (0.0, 0.0, 40.0)
         T_true = ground_truth_pose(true_pos, true_rpy_deg)
@@ -147,13 +147,61 @@ class TestTriangulation(unittest.TestCase):
 
         # Decoy: real geometry would put it far away and consistent, but we
         # deliberately fabricate a huge distance_m so it's provably NOT one
-        # of the 3 closest, regardless of its (irrelevant) pose contribution.
+        # of the closest max_markers, regardless of its (irrelevant) pose
+        # contribution. max_markers=3 here so the pool has no room for it.
         decoy = MarkerDetection(marker_id=99, camera_name="FRONT", distance_m=999.0,
                                  T_marker_cam=homogeneous(np.eye(3), np.array([0.0, 0.0, 999.0])))
         detections.append(decoy)
 
-        result = localization.estimate(detections, mm, extrinsics)
+        result = localization.estimate(detections, mm, extrinsics, max_markers=3)
         self.assertEqual(result.markers_detected, 3)
+        self.assertNotIn(99, result.marker_ids)
+        assert_pose_close(self, result, true_pos, true_rpy_deg)
+
+    def test_more_than_three_combines_all_triplets(self):
+        """With more than 3 markers in the pool, every 3-marker combination
+        is trilaterated and fused. Since these fabricated detections are all
+        exactly consistent with one ground-truth pose (no measurement
+        noise), every triplet independently recovers the same true pose, so
+        the combined estimate should too."""
+        true_pos = (2.0, 0.5, -3.0)
+        true_rpy_deg = (0.0, 0.0, 40.0)
+        T_true = ground_truth_pose(true_pos, true_rpy_deg)
+
+        mm = make_marker_map(self, [
+            {"id": 1, "x": 0.0, "y": 0.0, "z": 0.0},
+            {"id": 2, "x": 5.0, "y": 0.0, "z": 0.0},
+            {"id": 3, "x": 0.0, "y": 0.0, "z": 5.0},
+            {"id": 4, "x": 5.0, "y": 0.0, "z": 5.0},
+        ])
+        extrinsics = identity_extrinsics(["FRONT"])
+        detections = [fabricate_detection(mid, "FRONT", mm, T_true, extrinsics) for mid in (1, 2, 3, 4)]
+
+        result = localization.estimate(detections, mm, extrinsics)  # default max_markers=7
+        self.assertEqual(result.markers_detected, 4)
+        assert_pose_close(self, result, true_pos, true_rpy_deg)
+
+    def test_default_pool_still_excludes_far_decoy(self):
+        """A decoy far outside even the default (7-marker) pool should still
+        be excluded, same guarantee as test_pool_cap_excludes_far_markers
+        but against the real default instead of an explicit small cap."""
+        true_pos = (2.0, 0.5, -3.0)
+        true_rpy_deg = (0.0, 0.0, 40.0)
+        T_true = ground_truth_pose(true_pos, true_rpy_deg)
+
+        real_ids = list(range(1, 8))  # 7 real markers -> fills the default pool on its own
+        mm = make_marker_map(self, [
+            {"id": mid, "x": float(mid), "y": 0.0, "z": float(mid)} for mid in real_ids
+        ] + [{"id": 99, "x": 100.0, "y": 0.0, "z": 100.0}])
+        extrinsics = identity_extrinsics(["FRONT"])
+        detections = [fabricate_detection(mid, "FRONT", mm, T_true, extrinsics) for mid in real_ids]
+
+        decoy = MarkerDetection(marker_id=99, camera_name="FRONT", distance_m=999.0,
+                                 T_marker_cam=homogeneous(np.eye(3), np.array([0.0, 0.0, 999.0])))
+        detections.append(decoy)
+
+        result = localization.estimate(detections, mm, extrinsics)  # default max_markers=7
+        self.assertEqual(result.markers_detected, 7)
         self.assertNotIn(99, result.marker_ids)
         assert_pose_close(self, result, true_pos, true_rpy_deg)
 

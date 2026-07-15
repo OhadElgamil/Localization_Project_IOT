@@ -23,7 +23,20 @@ CAMERA_TCP_PORT = 5000
 # Runs on 5001, not 5000, since the camera TCP server above owns port 5000.
 API_BASE_URL = "http://127.0.0.1:5001"
 
-SNAP_TIMEOUT_S = 6.0       # per-camera SNAP round trip timeout
+MAX_TRIANGULATION_MARKERS = 7  # localization.py trilaterates every 3-marker
+                                # combination among the closest N seen this
+                                # cycle and fuses the results; N is capped
+                                # here since combinations grow fast (C(N,3):
+                                # 7 -> 35 triplets, 10 -> 120).
+
+SNAP_TIMEOUT_S = 1.5       # per-camera SNAP round trip timeout: cameras are now
+                           # sampled in parallel (see pipeline.py), so this is
+                           # also the worst-case cycle time if one camera hangs.
+                           # Kept comfortably under the server's staleness
+                           # threshold (flutter_app/pi_server/server.py) so a
+                           # single flaky camera can't false-flag the whole
+                           # pipeline as disconnected -- it's just skipped for
+                           # that cycle instead, and picked up again next time.
 CYCLE_SLEEP_S = 0.05       # gap between sampling cycles
 
 # "DEBUG" logs every raw detection, distance, candidate pose, and POST
@@ -65,16 +78,22 @@ PICAM_HEIGHT = 600
 # translation_m = (x, y, z) offset in meters. rpy_deg = (roll, pitch, yaw) in
 # degrees; yaw rotates about Y (up).
 #
-# TODO: these are placeholders. Measure your actual rig (translation offset
-# + mounting rotation for each camera) and replace every entry below. Do not
-# assume any particular rig shape -- this config makes no assumption about
-# how many cameras there are or how they're arranged.
+# Rig: reference point at the center of a 10cm x 10cm square, all cameras at
+# that same height (y offset 0 for all). One camera sits at the midpoint of
+# each edge, facing straight outward. FRONT/LEFT/RIGHT are named relative to
+# PICAM, which sits on the rear edge. Half the square's side (0.05m) sets
+# each translation; each yaw is whatever rotation makes that camera face
+# straight outward from its own edge, solved against the -Z-at-identity
+# convention above.
+# TODO: if the rig geometry changes (different size, different arrangement),
+# recompute these -- this config makes no assumption about rig shape, these
+# specific numbers are just this rig's measurements.
 # ---------------------------------------------------------------------------
 CAMERA_EXTRINSICS_RAW = {
-    "FRONT": {"translation_m": (0.0, 0.0, 0.0), "rpy_deg": (0.0, 0.0, 0.0)},
-    "LEFT":  {"translation_m": (0.0, 0.0, 0.0), "rpy_deg": (0.0, 0.0, 0.0)},
-    "RIGHT": {"translation_m": (0.0, 0.0, 0.0), "rpy_deg": (0.0, 0.0, 0.0)},
-    "PICAM": {"translation_m": (0.0, 0.0, 0.0), "rpy_deg": (0.0, 0.0, 0.0)},
+    "FRONT": {"translation_m": (0.05, 0.0, 0.0), "rpy_deg": (0.0, 0.0, -90.0)},
+    "LEFT":  {"translation_m": (0.0, 0.0, -0.05), "rpy_deg": (0.0, 0.0, 0.0)},
+    "RIGHT": {"translation_m": (0.0, 0.0, 0.05), "rpy_deg": (0.0, 0.0, 180.0)},
+    "PICAM": {"translation_m": (-0.05, 0.0, 0.0), "rpy_deg": (0.0, 0.0, 90.0)},
 }
 
 # Sampling order. CameraManager.available_cameras() decides what's actually

@@ -60,7 +60,8 @@ def run():
 
             logger.debug("cycle %d: cameras=%s detections=%d", cycle, names, len(detections))
 
-            result = localization.estimate(detections, marker_map, config.T_CAM_ROBOT)
+            result = localization.estimate(detections, marker_map, config.T_CAM_ROBOT,
+                                            max_markers=config.MAX_TRIANGULATION_MARKERS)
             api.post_localization(result)  # unconditional: success or error, every cycle
 
             time.sleep(config.CYCLE_SLEEP_S)

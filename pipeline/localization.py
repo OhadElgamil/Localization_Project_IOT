@@ -3,12 +3,18 @@
 Pure logic only -- no cv2, no sockets -- so this module and its tests never
 need real cameras or images.
 
-Strategy: exactly 3 markers (the 3 closest, by raw measured distance) are
-used for a least-squares trilateration + orientation fusion. Fewer than 3
-known markers seen this cycle is an explicit error, not a degraded estimate
-(some earlier/other robots-in-this-family used partial 1- or 2-marker
-fallbacks; this system doesn't -- see contracts.INSUFFICIENT_MARKERS_ERROR).
+Strategy: every combination of 3 markers (drawn from the closest
+`max_markers` seen this cycle) is independently trilaterated, then those
+per-triplet estimates are combined into one pose, weighted by each triplet's
+own confidence -- a single bad/inconsistent marker only spoils the triplets
+that include it, instead of the one fixed solve. `max_markers` bounds the
+combinatorics (C(n, 3) triplets) since it grows fast: 7 markers is 35
+triplets, 10 is 120. Fewer than 3 known markers seen this cycle is an
+explicit error, not a degraded estimate (some earlier/other
+robots-in-this-family used partial 1- or 2-marker fallbacks; this system
+doesn't -- see contracts.INSUFFICIENT_MARKERS_ERROR).
 """
+import itertools
 import logging
 from dataclasses import dataclass
 
@@ -20,7 +26,8 @@ from contracts import LocalizationResult, INSUFFICIENT_MARKERS_ERROR
 logger = logging.getLogger("pipeline.localization")
 
 MIN_MARKERS = 3
-TRILATERATION_COUNT = 3
+TRIPLET_SIZE = 3
+MAX_MARKERS = 7
 
 
 def _v(arr, unit=""):
@@ -101,7 +108,7 @@ def build_candidates(detections, marker_map, camera_extrinsics):
     return list(by_marker.values())
 
 
-def select_closest(candidates, k=TRILATERATION_COUNT):
+def select_closest(candidates, k=MAX_MARKERS):
     """The k candidates with the smallest raw measured distance_m (not
     distance to any estimated position -- that would be circular)."""
     return sorted(candidates, key=lambda c: c.distance_m)[:k]
@@ -109,7 +116,7 @@ def select_closest(candidates, k=TRILATERATION_COUNT):
 
 def fuse(candidates):
     """Least-squares trilateration + orientation fusion over `candidates`
-    (expected to be exactly TRILATERATION_COUNT long)."""
+    (expected to be exactly TRIPLET_SIZE long)."""
     marker_ids = [c.marker_id for c in candidates]
     positions = [c.marker_position for c in candidates]
     robot_distances = [c.robot_distance_m for c in candidates]
@@ -141,8 +148,35 @@ def fuse(candidates):
     )
 
 
+def _combine_triplets(results):
+    """Fold multiple independent TRIPLET_SIZE-marker `fuse()` results into one
+    pose, weighted by each triplet's own confidence -- a triplet touching a
+    bad/inconsistent marker gets a larger residual (see fuse()) and so a
+    lower weight here, letting the well-agreeing triplets outvote it instead
+    of it corrupting a single fixed solve."""
+    positions = np.array([r.position for r in results])
+    weights = np.array([r.confidence for r in results])
+
+    position = np.average(positions, axis=0, weights=weights)
+
+    rpys = [r.orientation for r in results]
+    rpy = tuple(weighted_circular_mean([r[k] for r in rpys], weights) for k in range(3))
+
+    # Triplets disagreeing with each other (large spread) is itself a sign
+    # something's off -- same "penalize inconsistency" idea fuse() applies
+    # via its own range residual, just at the ensemble level.
+    spread = float(np.mean(np.std(positions, axis=0)))
+    confidence = float(np.clip(np.average(weights) - 0.5 * spread, 0.3, 0.95))
+
+    marker_ids = sorted({mid for r in results for mid in r.marker_ids})
+    return LocalizationResult(
+        position=position, orientation=rpy, confidence=confidence,
+        markers_detected=len(marker_ids), marker_ids=marker_ids, error=None,
+    )
+
+
 def estimate(detections, marker_map, camera_extrinsics,
-             min_markers=MIN_MARKERS, k=TRILATERATION_COUNT):
+             min_markers=MIN_MARKERS, max_markers=MAX_MARKERS):
     """Always returns a LocalizationResult -- never None, never raises.
     Insufficient markers is an expected, frequent runtime state, not an
     exceptional one; `result.error` carries the reason when it applies."""
@@ -158,10 +192,13 @@ def estimate(detections, marker_map, camera_extrinsics,
             error=INSUFFICIENT_MARKERS_ERROR,
         )
 
-    result = fuse(select_closest(candidates, k))
+    pool = select_closest(candidates, max_markers)
+    triplet_results = [fuse(list(triplet)) for triplet in itertools.combinations(pool, TRIPLET_SIZE)]
+    result = triplet_results[0] if len(triplet_results) == 1 else _combine_triplets(triplet_results)
+
     logger.info(
-        "FUSION RESULT: n=%d ids=%s pos=%s %s conf=%.2f",
-        result.markers_detected, result.marker_ids,
+        "FUSION RESULT: pool=%d triplets=%d ids=%s pos=%s %s conf=%.2f",
+        len(pool), len(triplet_results), result.marker_ids,
         _v(result.position, "m"), _rpy_deg(result.orientation), result.confidence,
     )
     return result

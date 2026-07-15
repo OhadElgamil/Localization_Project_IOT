@@ -19,8 +19,18 @@ class _MonitorScreenState extends State<MonitorScreen> {
   LocalizationResult? _lastGoodResult;
   String? _statusMessage;
   bool _isPolling = false;
+  // Updated from every response that actually reaches us, success or
+  // "not enough markers" error alike -- unlike _lastGoodResult, this is
+  // meant to reflect what the rig sees *right now*, which is most useful
+  // exactly when localization is failing and you're trying to see why.
+  int? _markersSeen;
+  List<int> _markerIds = const [];
+  // Guards against overlapping requests: at a 150ms poll interval, a single
+  // slow HTTP round trip (network hiccup, server hang) could otherwise let
+  // ticks pile up into a growing backlog of concurrent requests.
+  bool _requestInFlight = false;
 
-  static const _pollInterval = Duration(seconds: 1);
+  static const _pollInterval = Duration(milliseconds: 100);
 
   void _startPolling() {
     _timer?.cancel();
@@ -36,11 +46,13 @@ class _MonitorScreenState extends State<MonitorScreen> {
   }
 
   Future<void> _poll() async {
+    if (_requestInFlight) return;
     final conn = context.read<ConnectionProvider>();
     if (!conn.isConnected) {
       if (mounted) setState(() => _statusMessage = 'Not connected to Pi.');
       return;
     }
+    _requestInFlight = true;
     try {
       final result = await conn.service.getLocalization();
       if (!mounted) return;
@@ -49,15 +61,21 @@ class _MonitorScreenState extends State<MonitorScreen> {
           _statusMessage = 'No localization data available yet.';
         } else if (result.error != null) {
           _statusMessage = result.error;
+          _markersSeen = result.markersDetected;
+          _markerIds = result.markerIds;
         } else {
           _statusMessage = null;
           _lastGoodResult = result;
+          _markersSeen = result.markersDetected;
+          _markerIds = result.markerIds;
         }
       });
     } catch (e) {
       if (mounted) {
         setState(() => _statusMessage = '$e');
       }
+    } finally {
+      _requestInFlight = false;
     }
   }
 
@@ -94,6 +112,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
             isConnected: conn.isConnected,
             lastUpdate: _lastGoodResult?.timestamp,
           ),
+          _MarkersSeenBar(count: _markersSeen, ids: _markerIds),
           // Once we have a last-known location, keep it on screen -- a lost
           // connection or a transient "too few markers" reading only shows a
           // thin banner, it never blanks out the display.
@@ -137,7 +156,7 @@ class _PollingStatusBar extends StatelessWidget {
       label = 'Not connected to Pi';
     } else if (isPolling) {
       bg = cs.secondaryContainer;
-      label = 'Polling every 1 s';
+      label = 'Polling every 150 ms';
     } else {
       bg = cs.surfaceVariant;
       label = 'Paused';
@@ -179,6 +198,57 @@ class _PollingStatusBar extends StatelessWidget {
     return '${local.hour.toString().padLeft(2, '0')}:'
         '${local.minute.toString().padLeft(2, '0')}:'
         '${local.second.toString().padLeft(2, '0')}';
+  }
+}
+
+class _MarkersSeenBar extends StatelessWidget {
+  final int? count;
+  final List<int> ids;
+
+  const _MarkersSeenBar({required this.count, required this.ids});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      color: cs.surfaceVariant.withOpacity(0.5),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(Icons.qr_code_scanner, size: 16, color: cs.onSurfaceVariant),
+          const SizedBox(width: 8),
+          Text(
+            count == null ? 'Markers seen: --' : 'Markers seen: $count',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: cs.onSurfaceVariant,
+            ),
+          ),
+          if (ids.isNotEmpty) ...[
+            const SizedBox(width: 12),
+            Expanded(
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  for (final id in ids)
+                    Chip(
+                      label: Text('#$id', style: const TextStyle(fontSize: 11)),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: EdgeInsets.zero,
+                      backgroundColor: cs.primaryContainer.withOpacity(0.6),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }
 
