@@ -1,19 +1,19 @@
-"""Manages connections to the three ESP32-CAM units plus the built-in Pi camera.
+"""Manages connections to the ESP32-CAM/ESP-EYE cameras plus the built-in Pi camera.
 
-Wire protocol (must match ESP32/send_pictures_on_managers_command.ino):
+Wire protocol (must match ESP_EYE/send_pictures_on_command/send_pictures_on_command.ino,
+and the compatible subset spoken by ESP32/send_pictures_on_managers_command.ino):
   1. Camera opens a TCP connection to the Pi on CAMERA_TCP_PORT and keeps it open.
-  2. Camera sends one handshake line: "ID:FRONT\\n" / "ID:LEFT\\n" / "ID:RIGHT\\n".
+  2. Camera sends a handshake line: "ID:FRONT\\n" / "ID:LEFT\\n" / "ID:RIGHT\\n",
+     immediately followed by a "READY\\n" line (drained here with a short
+     timeout; older firmware that only sends "ID:" also works fine).
   3. Pi sends "SNAP\\n" whenever it wants a frame from that camera.
   4. Camera replies with a decimal length line ("12345\\n") followed by exactly
      that many bytes of JPEG data.
   5. If the camera drops the connection, it reconnects on its own (firmware
      retries every 2s), so the manager just needs to keep accepting.
 
-This is a pull/request-response design (matches the "ask for an image and
-wait" fallback) rather than a continuous push stream: each named camera slot
-holds at most one live connection, and `sample()` blocks for one SNAP round
-trip. Callers that want to "sample cameras in any order" just call
-`sample(name)` for whichever name they want, whenever they want.
+This is a pull/request-response design: each named camera slot holds at most
+one live connection, and `sample()` blocks for one SNAP round trip.
 """
 import logging
 import os
@@ -150,11 +150,11 @@ class CameraManager:
                 conn.close()
                 return
 
-            # ESP_EYE/send_pictures_on_command.ino sends a second "READY\n"
-            # line right after the ID line. Older AI-Thinker firmware
-            # doesn't. Drain it if present so it can't get mistaken for a
-            # SNAP response's length line later; a short timeout lets us
-            # tell "no second line coming" apart from "still in flight".
+            # ESP_EYE firmware sends a second "READY\n" line right after the
+            # ID line. Older firmware doesn't. Drain it if present so it
+            # can't get mistaken for a SNAP response's length line later; a
+            # short timeout tells "no second line coming" apart from "still
+            # in flight" without blocking the handshake indefinitely.
             conn.settimeout(0.5)
             try:
                 extra = rfile.readline().decode("ascii", errors="ignore").strip()

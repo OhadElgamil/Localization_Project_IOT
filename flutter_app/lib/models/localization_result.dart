@@ -6,6 +6,9 @@ class LocalizationResult {
   final double confidence;
   final DateTime timestamp;
   final int markersDetected;
+  // Set when the Pi couldn't compute a position this cycle (e.g. fewer than
+  // 3 barcodes visible) -- x/y/z/yaw are meaningless (zeroed) when this is set.
+  final String? error;
 
   const LocalizationResult({
     required this.x,
@@ -15,21 +18,23 @@ class LocalizationResult {
     required this.confidence,
     required this.timestamp,
     required this.markersDetected,
+    this.error,
   });
 
   factory LocalizationResult.fromJson(Map<String, dynamic> json) {
-    final pos = json['position'] as Map<String, dynamic>? ?? json;
+    final pos = json['position'] as Map<String, dynamic>?;
     final orient = json['orientation'] as Map<String, dynamic>?;
     return LocalizationResult(
-      x: (pos['x'] as num).toDouble(),
-      y: (pos['y'] as num).toDouble(),
-      z: (pos['z'] as num? ?? 0).toDouble(),
+      x: (pos?['x'] as num? ?? 0).toDouble(),
+      y: (pos?['y'] as num? ?? 0).toDouble(),
+      z: (pos?['z'] as num? ?? 0).toDouble(),
       yaw: orient != null ? (orient['yaw'] as num?)?.toDouble() : null,
       confidence: (json['confidence'] as num? ?? 0.0).toDouble(),
       timestamp: json['timestamp'] != null
           ? DateTime.tryParse(json['timestamp'] as String) ?? DateTime.now()
           : DateTime.now(),
       markersDetected: (json['markers_detected'] as num? ?? 0).toInt(),
+      error: json['error'] as String?,
     );
   }
 }

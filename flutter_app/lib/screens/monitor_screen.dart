@@ -43,7 +43,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
       if (mounted) {
         setState(() {
           _result = result;
-          _error = result == null ? 'No localization data available yet.' : null;
+          _error = result == null ? 'No localization data available yet.' : result.error;
         });
       }
     } catch (e) {

@@ -1,4 +1,4 @@
-"""Reports localization results to the Flask server that the Flutter app polls."""
+"""Reports localization results (success or error) to the Flask server the app polls."""
 import logging
 
 import numpy as np
@@ -13,18 +13,23 @@ class ApiClient:
         self.timeout = timeout
 
     def post_localization(self, result):
-        roll, pitch, yaw = result.orientation
-        payload = {
-            "x": float(result.position[0]),
-            "y": float(result.position[1]),
-            "z": float(result.position[2]),
-            "yaw": float(np.degrees(yaw)),
-            "pitch": float(np.degrees(pitch)),
-            "roll": float(np.degrees(roll)),
-            "confidence": float(result.confidence),
-            "markers_detected": int(result.markers_detected),
-        }
-        logger.info("POST %s/api/localization payload=%s", self.base_url, payload)
+        if result.error is not None:
+            payload = {"error": result.error, "markers_detected": int(result.markers_detected)}
+        else:
+            roll, pitch, yaw = result.orientation
+            payload = {
+                "x": float(result.position[0]),
+                "y": float(result.position[1]),
+                "z": float(result.position[2]),
+                "yaw": float(np.degrees(yaw)),
+                "pitch": float(np.degrees(pitch)),
+                "roll": float(np.degrees(roll)),
+                "confidence": float(result.confidence),
+                "markers_detected": int(result.markers_detected),
+                "error": None,
+            }
+
+        logger.debug("POST %s/api/localization payload=%s", self.base_url, payload)
         try:
             resp = requests.post(f"{self.base_url}/api/localization", json=payload, timeout=self.timeout)
             logger.debug("POST response: %s %s", resp.status_code, resp.text[:200])
