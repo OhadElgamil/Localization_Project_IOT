@@ -3,14 +3,16 @@
 
 // ===========================
 // Network & Pi Settings
-const char* ssid = "PiNet";
+const char* ssid = "Ohadphone";
+const char* password = "pxwj8287";
 
-const char* pi_ip = "10.42.0.1";
+// const char* pi_ip = "10.42.0.1";
+const char* ip = ""
 const int pi_port = 5000;
 
 // Set to "FRONT", "LEFT", or "RIGHT" before flashing each unit — this is how
 // the Pi tells the three cameras apart (pipeline/camera_link.py).
-const String CAMERA_ID = "RIGHT";
+const String CAMERA_ID = "FRONT";
 
 // ===========================
 // ESP-EYE Camera Pins
@@ -59,8 +61,8 @@ void setup() {
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode    = CAMERA_GRAB_LATEST;
 
-  config.frame_size   = FRAMESIZE_UXGA; 
-  config.jpeg_quality = 5;              
+  config.frame_size   = FRAMESIZE_SVGA; 
+  config.jpeg_quality = 2;              
   config.fb_count     = 2;
 
   esp_err_t err = esp_camera_init(&config);
@@ -78,7 +80,7 @@ void setup() {
   }
 
   // 3. Connect to Wi-Fi
-  WiFi.begin(ssid);
+  WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
