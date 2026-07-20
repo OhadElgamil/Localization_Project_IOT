@@ -106,11 +106,8 @@ def main():
         cv2.putText(vis, "No markers found", (20, 40),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
 
-    cv2.imshow("ArUco Pose Estimation", vis)
     cv2.imwrite("output.jpg", vis)
     print("Saved visualization to output.jpg")
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()
