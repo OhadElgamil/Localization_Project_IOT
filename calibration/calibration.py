@@ -8,14 +8,18 @@ and pipeline/camera_link.py):
   3. Camera replies with a decimal length line ("12345\n") followed by
      exactly that many bytes of JPEG data.
 
-Controls (with the preview window focused):
-  E - capture the current frame for calibration
+Controls (type into the terminal running this script):
+  E - request and save a frame for calibration
   S - stop capturing and run calibration on the collected images
-  Q / ESC - quit without calibrating
+  Q - quit without calibrating
 """
 import argparse
 import os
+import select
 import socket
+import sys
+import termios
+import tty
 
 import cv2
 import numpy as np
@@ -83,36 +87,47 @@ def snap(conn):
     return cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
 
+def safe_print(message):
+    # In raw terminal mode \n alone doesn't return the cursor to column 0.
+    sys.stdout.write(message.replace("\n", "\r\n") + "\r\n")
+    sys.stdout.flush()
+
+
 def capture_loop(conn, img_dir):
     os.makedirs(img_dir, exist_ok=True)
     count = 0
-    print("\nPress 'e' to capture an image, 's' to stop and calibrate, 'q' to quit.")
-    while True:
-        frame = snap(conn)
-        if frame is None:
-            print("Failed to grab frame, retrying...")
-            continue
+    safe_print("\nPress 'e' to capture an image, 's' to stop and calibrate, 'q' to quit.")
 
-        preview = frame.copy()
-        cv2.putText(preview, f"Captured: {count}", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.imshow("Calibration - E: capture, S: calibrate, Q: quit", preview)
-        key = cv2.waitKey(1) & 0xFF
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        while True:
+            ready, _, _ = select.select([sys.stdin], [], [], 0.5)
+            if not ready:
+                continue
+            char = sys.stdin.read(1)
 
-        if key == ord('e'):
-            path = os.path.join(img_dir, f"calib_{count:03d}.jpg")
-            cv2.imwrite(path, frame)
-            count += 1
-            print(f"Saved {path} ({count} total)")
-        elif key == ord('s'):
-            print(f"Stopping capture with {count} images.")
-            break
-        elif key == ord('q') or key == 27:
-            print("Quitting without calibrating.")
-            cv2.destroyAllWindows()
-            return None
+            if char in ("e", "E"):
+                safe_print("'e' received - requesting image from camera, please wait...")
+                frame = snap(conn)
+                if frame is None:
+                    safe_print("Failed to grab frame, try again.")
+                    continue
+                path = os.path.join(img_dir, f"calib_{count:03d}.jpg")
+                cv2.imwrite(path, frame)
+                count += 1
+                safe_print(f"Saved {path} ({count} total)")
+            elif char in ("s", "S"):
+                safe_print(f"Stopping capture with {count} images.")
+                break
+            elif char in ("q", "Q", "\x03"):
+                safe_print("Quitting without calibrating.")
+                count = None
+                break
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
-    cv2.destroyAllWindows()
     return count
 
 
