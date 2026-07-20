@@ -2,10 +2,14 @@ import cv2
 import numpy as np
 import argparse
 
+import os
+
 def main():
     parser = argparse.ArgumentParser(description="ArUco Marker Pose Estimator")
     parser.add_argument("image", help="Path to the image file")
     parser.add_argument("marker_size", type=float, help="Size of the marker in meters (e.g., 0.05 for 5cm)")
+    parser.add_argument("--calib", type=str, default="calibration_data.npz", help="Path to calibration data file")
+    parser.add_argument("--uncalib", action="store_true", help="Force using the default camera matrix guess instead of calibration data")
     args = parser.parse_args()
 
     img = cv2.imread(args.image)
@@ -13,24 +17,48 @@ def main():
         print("Error: Could not load the image.")
         return
         
-    #Load actual calibration data instead of guessing
-    #try:
-    #	with np.load("calibration_data.npz") as X:
-    #        camera_matrix, dist_coeffs = [X[i] for i in ('camera_matrix', 'dist_coeffs')]
-    #        print(camera_matrix)
-    #       print(dist_coeffs)
-    #except FileNotFoundError:
-    # 	print("Error: calibration_data.npz not found. Please run the calibration script first.")
-    #	return
+    # Load actual calibration data if available and not forced to bypass
+    if not args.uncalib and os.path.exists(args.calib):
+        print(f"Loading calibration from {args.calib}")
+        data = np.load(args.calib)
+        camera_matrix = data["camera_matrix"]
+        dist_coeffs = data["dist_coeffs"]
         
-    focal_length = img.shape[1]
-    center = (img.shape[1]/2, img.shape[0]/2)
-    camera_matrix = np.array([
-        [focal_length, 0, center[0]],
-        [0, focal_length, center[1]],
-    [0, 0, 1]
-    ], dtype="double")
-    dist_coeffs = np.zeros((5,1))
+        # Check resolution if img_shape is saved
+        if "img_shape" in data:
+            calib_shape = data["img_shape"]  # (width, height)
+            current_shape = (img.shape[1], img.shape[0])
+            if calib_shape[0] != current_shape[0] or calib_shape[1] != current_shape[1]:
+                print(f"Warning: Image resolution {current_shape} does not match calibration resolution {tuple(calib_shape)}.")
+                print("Scaling camera matrix to match current resolution...")
+                scale_x = current_shape[0] / calib_shape[0]
+                scale_y = current_shape[1] / calib_shape[1]
+                camera_matrix[0, 0] *= scale_x  # fx
+                camera_matrix[0, 2] *= scale_x  # cx
+                camera_matrix[1, 1] *= scale_y  # fy
+                camera_matrix[1, 2] *= scale_y  # cy
+    else:
+        if args.uncalib:
+            print("Using default camera matrix guess (forced by --uncalib).")
+        else:
+            print(f"Warning: Calibration file {args.calib} not found. Using default camera matrix.")
+        focal_length = img.shape[1]
+        center = (img.shape[1]/2, img.shape[0]/2)
+        camera_matrix = np.array([
+            [focal_length, 0, center[0]],
+            [0, focal_length, center[1]],
+            [0, 0, 1]
+        ], dtype="double")
+        dist_coeffs = np.zeros((5,1))
+
+    # Undistort the image first if distortion is non-zero
+    if np.any(dist_coeffs):
+        print("Undistorting image before ArUco detection...")
+        img = cv2.undistort(img, camera_matrix, dist_coeffs)
+        # Since we undistorted the image, we tell solvePnP that distortion is now 0
+        dist_coeffs_pnp = np.zeros(5)
+    else:
+        dist_coeffs_pnp = dist_coeffs
 
     dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
     parameters = cv2.aruco.DetectorParameters()
@@ -53,7 +81,9 @@ def main():
         ], dtype=np.float32)
 
         for i in range(len(ids)):
-            success, rvec, tvec = cv2.solvePnP(obj_points, corners[i][0], camera_matrix, dist_coeffs)
+            success, rvec, tvec = cv2.solvePnP(
+                obj_points, corners[i][0], camera_matrix, dist_coeffs_pnp, flags=cv2.SOLVEPNP_IPPE_SQUARE
+            )
             if success:
                 distance = np.linalg.norm(tvec)
                 x, y, z = tvec.flatten()

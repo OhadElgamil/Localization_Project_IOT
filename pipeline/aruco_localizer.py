@@ -48,15 +48,35 @@ class ArucoDetector:
 
     def _intrinsics_for(self, camera_name, frame):
         if camera_name in self._calibrated_cache:
-            return self._calibrated_cache[camera_name]
+            raw_matrix, dist_coeffs, img_shape = self._calibrated_cache[camera_name]
+        else:
+            path = os.path.join(self.config.CALIBRATION_DIR, f"{camera_name}.npz")
+            if os.path.exists(path):
+                data = np.load(path)
+                raw_matrix = data["camera_matrix"]
+                dist_coeffs = data["dist_coeffs"]
+                img_shape = data["img_shape"] if "img_shape" in data else None
+                self._calibrated_cache[camera_name] = (raw_matrix, dist_coeffs, img_shape)
+                logger.info("[%s] loaded intrinsics from %s", camera_name, path)
+            else:
+                raw_matrix = None
 
-        path = os.path.join(self.config.CALIBRATION_DIR, f"{camera_name}.npz")
-        if os.path.exists(path):
-            data = np.load(path)
-            result = (data["camera_matrix"], data["dist_coeffs"])
-            self._calibrated_cache[camera_name] = result
-            logger.info("[%s] loaded intrinsics from %s", camera_name, path)
-            return result
+        if raw_matrix is not None:
+            camera_matrix = np.copy(raw_matrix)
+            if img_shape is not None:
+                h, w = frame.shape[:2]
+                if img_shape[0] != w or img_shape[1] != h:
+                    logger.warning(
+                        "[%s] Frame size %dx%d doesn't match calibration size %dx%d. Scaling intrinsics...",
+                        camera_name, w, h, img_shape[0], img_shape[1]
+                    )
+                    scale_x = w / img_shape[0]
+                    scale_y = h / img_shape[1]
+                    camera_matrix[0, 0] *= scale_x  # fx
+                    camera_matrix[0, 2] *= scale_x  # cx
+                    camera_matrix[1, 1] *= scale_y  # fy
+                    camera_matrix[1, 2] *= scale_y  # cy
+            return camera_matrix, dist_coeffs
 
         # No calibration file: derive fresh from *this* frame's actual shape
         # every call (deliberately not cached, unlike the calibrated branch --

@@ -138,6 +138,7 @@ def calibrate(img_dir, save_path):
 
     obj_points = []
     img_points = []
+    used_filenames = []
     img_shape = None
 
     images = sorted(f for f in os.listdir(img_dir) if f.lower().endswith(".jpg"))
@@ -161,6 +162,7 @@ def calibrate(img_dir, save_path):
         corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
         obj_points.append(objp)
         img_points.append(corners)
+        used_filenames.append(fname)
         print(f"[OK] {fname}")
 
     if len(obj_points) < 3:
@@ -176,18 +178,18 @@ def calibrate(img_dir, save_path):
     per_image = []
     for i in range(len(obj_points)):
         projected, _ = cv2.projectPoints(
-        obj_points[i], rvecs[i], tvecs[i], camera_matrix, dist_coeffs
+            obj_points[i], rvecs[i], tvecs[i], camera_matrix, dist_coeffs
         )
         projected = projected.reshape(-1, 2)
         observed = img_points[i].reshape(-1, 2)
         # RMS error for this image
         err = np.sqrt(np.mean(np.sum((projected - observed) ** 2, axis=1)))
-        per_image.append((images[i], err))
+        per_image.append((used_filenames[i], err))
 
     # sort worst-first so the offenders are obvious
-    for i, err in sorted(per_image, key=lambda x: -x[1]):
+    for fname, err in sorted(per_image, key=lambda x: -x[1]):
         flag = "  <-- DROP" if err > 2 * ret else ""
-        print(f"  image {i}: {err:.4f} px{flag}")    
+        print(f"  image {fname}: {err:.4f} px{flag}")    
     
 
     print("\n--- Calibration Result ---")
@@ -197,7 +199,7 @@ def calibrate(img_dir, save_path):
     print(dist_coeffs)
     print(f"\nMean reprojection error: {ret:.4f} px")
 
-    np.savez(save_path, camera_matrix=camera_matrix, dist_coeffs=dist_coeffs)
+    np.savez(save_path, camera_matrix=camera_matrix, dist_coeffs=dist_coeffs, img_shape=img_shape)
     print(f"\nSaved calibration data to {save_path}")
 
 

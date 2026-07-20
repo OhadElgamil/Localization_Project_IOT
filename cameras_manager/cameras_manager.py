@@ -9,8 +9,8 @@ import time
 
 HOST = '0.0.0.0'
 PORT = 5000
-WIDTH = "640"
-HEIGHT = "480"
+WIDTH = "800"
+HEIGHT = "600"
 QUALITY = "75"
 
 # Thread-safe dictionary to track multiple connected cameras: { "ID": (conn, rfile) }
@@ -33,10 +33,12 @@ def capture_pi_camera(count, on_complete_cb=None):
     filename = f"pi_photo_{count}.jpg"
     try:
         try:
-            subprocess.run(["rpicam-still", "-o", filename, "-t", "100", "--immediate", "--nopreview", "--width", WIDTH],
+            subprocess.run(["rpicam-still", "-o", filename, "-t", "100", "--immediate", "--nopreview", 
+                            "--width", WIDTH, "--height", HEIGHT],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         except FileNotFoundError:
-            subprocess.run(["libcamera-still", "-o", filename, "-t", "100", "--immediate", "--nopreview"],
+            subprocess.run(["libcamera-still", "-o", filename, "-t", "100", "--immediate", "--nopreview",
+                            "--width", WIDTH, "--height", HEIGHT],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
         safe_print(f"[Pi Camera] Success! Saved as {filename}")
