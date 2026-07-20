@@ -170,8 +170,25 @@ def calibrate(img_dir, save_path):
     print(f"\n{len(obj_points)}/{len(images)} images usable. Calculating camera parameters...")
 
     ret, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
-        obj_points, img_points, img_shape, None, None
+        obj_points, img_points, img_shape, None, None, flags=cv2.CALIB_FIX_K3
     )
+        
+    per_image = []
+    for i in range(len(obj_points)):
+        projected, _ = cv2.projectPoints(
+        obj_points[i], rvecs[i], tvecs[i], camera_matrix, dist_coeffs
+        )
+        projected = projected.reshape(-1, 2)
+        observed = img_points[i].reshape(-1, 2)
+        # RMS error for this image
+        err = np.sqrt(np.mean(np.sum((projected - observed) ** 2, axis=1)))
+        per_image.append((images[i], err))
+
+    # sort worst-first so the offenders are obvious
+    for i, err in sorted(per_image, key=lambda x: -x[1]):
+        flag = "  <-- DROP" if err > 2 * ret else ""
+        print(f"  image {i}: {err:.4f} px{flag}")    
+    
 
     print("\n--- Calibration Result ---")
     print("Camera Matrix (Intrinsic Parameters):")
@@ -203,8 +220,7 @@ def main():
     finally:
         conn.close()
 
-    if count:
-        calibrate(args.img_dir, args.save_path)
+    calibrate(args.img_dir, args.save_path)
 
 
 if __name__ == "__main__":

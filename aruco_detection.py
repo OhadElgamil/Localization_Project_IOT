@@ -12,13 +12,23 @@ def main():
     if img is None:
         print("Error: Could not load the image.")
         return
-
+        
+    #Load actual calibration data instead of guessing
+    #try:
+    #	with np.load("calibration_data.npz") as X:
+    #        camera_matrix, dist_coeffs = [X[i] for i in ('camera_matrix', 'dist_coeffs')]
+    #        print(camera_matrix)
+    #       print(dist_coeffs)
+    #except FileNotFoundError:
+    # 	print("Error: calibration_data.npz not found. Please run the calibration script first.")
+    #	return
+        
     focal_length = img.shape[1]
     center = (img.shape[1]/2, img.shape[0]/2)
     camera_matrix = np.array([
         [focal_length, 0, center[0]],
         [0, focal_length, center[1]],
-        [0, 0, 1]
+    [0, 0, 1]
     ], dtype="double")
     dist_coeffs = np.zeros((5,1))
 
