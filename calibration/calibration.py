@@ -93,10 +93,39 @@ def safe_print(message):
     sys.stdout.flush()
 
 
-def capture_loop(conn, img_dir):
+def capture_local_pi_cam(width, height):
+    import tempfile
+    import shutil
+    import subprocess
+    tmp = os.path.join(tempfile.gettempdir(), "calib_picam_snap.jpg")
+    for cmd_name in ("rpicam-still", "libcamera-still"):
+        if shutil.which(cmd_name):
+            cmd = [cmd_name, "-o", tmp, "-t", "100", "--immediate", "--nopreview",
+                   "--width", str(width), "--height", str(height)]
+            try:
+                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                return cv2.imread(tmp)
+            except Exception as e:
+                safe_print(f"PiCam capture error via {cmd_name}: {e}")
+    # Fallback to cv2
+    cap = cv2.VideoCapture(0)
+    if cap.isOpened():
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        ok, frame = cap.read()
+        cap.release()
+        if ok:
+            return frame
+    return None
+
+
+def capture_loop(conn, img_dir, use_pi_cam=False, width=800, height=600):
     os.makedirs(img_dir, exist_ok=True)
     count = 0
-    safe_print("\nPress 'e' to capture an image, 's' to stop and calibrate, 'q' to quit.")
+    if use_pi_cam:
+        safe_print("\nLocal Pi Camera mode. Press 'e' to capture local image, 's' to stop and calibrate, 'q' to quit.")
+    else:
+        safe_print("\nESP32-CAM TCP mode. Press 'e' to capture image from ESP, 's' to stop and calibrate, 'q' to quit.")
 
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
@@ -109,8 +138,11 @@ def capture_loop(conn, img_dir):
             char = sys.stdin.read(1)
 
             if char in ("e", "E"):
-                safe_print("'e' received - requesting image from camera, please wait...")
-                frame = snap(conn)
+                safe_print("'e' received - requesting image, please wait...")
+                if use_pi_cam:
+                    frame = capture_local_pi_cam(width, height)
+                else:
+                    frame = snap(conn)
                 if frame is None:
                     safe_print("Failed to grab frame, try again.")
                     continue
@@ -206,7 +238,7 @@ def calibrate(img_dir, save_path):
 def main():
     parser = argparse.ArgumentParser(
         description="Single camera intrinsic calibration using a regular chessboard, "
-                     "captured live over the ESP32-CAM TCP link"
+                     "captured live locally (Pi Camera) or over ESP32-CAM TCP link"
     )
     parser.add_argument("--port", type=int, default=5000,
                          help="TCP port to listen on (matches pi_port in the ESP32 firmware)")
@@ -214,15 +246,36 @@ def main():
                          help="Directory to save captured images")
     parser.add_argument("--save_path", type=str, default="calibration_data.npz",
                          help="Output file for calibration results")
+    parser.add_argument("--pi-cam", action="store_true",
+                         help="Calibrate the local Pi camera directly instead of using ESP32 TCP camera link")
+    parser.add_argument("--width", type=int, default=800,
+                         help="Width of local Pi camera capture (default 800)")
+    parser.add_argument("--height", type=int, default=600,
+                         help="Height of local Pi camera capture (default 600)")
+    parser.add_argument("--only-calibrate", action="store_true",
+                         help="Skip capturing and run calibration directly on the existing images in --img_dir")
     args = parser.parse_args()
 
-    conn = wait_for_camera(args.port)
-    try:
-        count = capture_loop(conn, args.img_dir)
-    finally:
-        conn.close()
+    if args.only_calibrate:
+        calibrate(args.img_dir, args.save_path)
+        return
 
-    calibrate(args.img_dir, args.save_path)
+    if args.pi_cam:
+        use_pi = True
+    else:
+        use_pi = False
+
+    if use_pi:
+        count = capture_loop(None, args.img_dir, use_pi_cam=True, width=args.width, height=args.height)
+    else:
+        conn = wait_for_camera(args.port)
+        try:
+            count = capture_loop(conn, args.img_dir, use_pi_cam=False)
+        finally:
+            conn.close()
+
+    if count is not None and count > 0:
+        calibrate(args.img_dir, args.save_path)
 
 
 if __name__ == "__main__":
