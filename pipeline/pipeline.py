@@ -61,7 +61,7 @@ def run():
             camera_times = camera_manager.response_times()
             logger.debug("cycle %d: cameras=%s detections=%d times=%s", cycle, names, len(detections), camera_times)
 
-            result = localization.estimate(detections, marker_map, config.T_CAM_ROBOT,
+            result = localization.estimate_least_squares(detections, marker_map, config.T_CAM_ROBOT,
                                             max_markers=config.MAX_TRIANGULATION_MARKERS)
             api.post_localization(result, camera_response_times=camera_times)  # unconditional: success or error, every cycle
 
