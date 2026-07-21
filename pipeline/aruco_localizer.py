@@ -50,7 +50,8 @@ class ArucoDetector:
         if camera_name in self._calibrated_cache:
             raw_matrix, dist_coeffs, img_shape = self._calibrated_cache[camera_name]
         else:
-            path = os.path.join(self.config.CALIBRATION_DIR, f"{camera_name}.npz")
+            cam_id = "PI" if camera_name == "PICAM" else camera_name
+            path = os.path.join(self.config.CALIBRATION_DIR, f"calibration_data_{cam_id}.npz")
             if os.path.exists(path):
                 data = np.load(path)
                 raw_matrix = data["camera_matrix"]

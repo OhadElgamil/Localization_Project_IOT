@@ -59,10 +59,10 @@ ARUCO_DICT = cv2.aruco.DICT_4X4_1000
 MARKER_SIZE_M = 0.175  # must match the physical markers on the wall
 
 # Per-camera calibration produced by calibration/calibration.py
-# (np.savez with camera_matrix + dist_coeffs). Filename must be the upper-case
-# camera name, e.g. calibration_data/FRONT.npz. Cameras without a file are
-# assumed perfect: intrinsics are derived from each captured frame's actual
-# shape instead (see aruco_localizer.py).
+# (np.savez with camera_matrix + dist_coeffs). Filename must be calibration_data_ID.npz
+# where ID is the upper-case camera name (e.g., FRONT, LEFT, RIGHT, PI),
+# placed in the directory below. Cameras without a file are assumed perfect:
+# intrinsics are derived from each captured frame's actual shape instead.
 CALIBRATION_DIR = os.path.join(PIPELINE_DIR, "calibration_data")
 
 PICAM_WIDTH = 800
