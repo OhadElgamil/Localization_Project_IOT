@@ -24,20 +24,43 @@ class OptiTrackResult {
   });
 
   factory OptiTrackResult.fromJson(Map<String, dynamic> json) {
-    final estimate = json['estimate'] as Map<String, dynamic>;
-    final groundTruth = json['ground_truth'] as Map<String, dynamic>;
+    final estimate = _xyz(json['estimate']);
+    final groundTruth = _xyz(json['ground_truth']);
     return OptiTrackResult(
-      estimateX: (estimate['x'] as num).toDouble(),
-      estimateY: (estimate['y'] as num).toDouble(),
-      estimateZ: (estimate['z'] as num).toDouble(),
-      groundTruthX: (groundTruth['x'] as num).toDouble(),
-      groundTruthY: (groundTruth['y'] as num).toDouble(),
-      groundTruthZ: (groundTruth['z'] as num).toDouble(),
+      estimateX: estimate.$1,
+      estimateY: estimate.$2,
+      estimateZ: estimate.$3,
+      groundTruthX: groundTruth.$1,
+      groundTruthY: groundTruth.$2,
+      groundTruthZ: groundTruth.$3,
       errorM: (json['error_m'] as num).toDouble(),
       failedAttempts: (json['failed_attempts'] as num? ?? 0).toInt(),
       timestamp: json['timestamp'] != null
           ? DateTime.tryParse(json['timestamp'] as String) ?? DateTime.now()
           : DateTime.now(),
     );
+  }
+
+  // The server forwards whatever query_optitrack() on the OptiTrack side
+  // returns for ground_truth -- some OptiTrack/NatNet clients hand back a
+  // plain [x, y, z] list rather than a {"x":..,"y":..,"z":..} object, so
+  // this accepts either shape instead of assuming one.
+  static (double, double, double) _xyz(dynamic value) {
+    if (value is Map) {
+      return (
+        (value['x'] as num).toDouble(),
+        (value['y'] as num).toDouble(),
+        (value['z'] as num).toDouble(),
+      );
+    }
+    if (value is List && value.length >= 3) {
+      return (
+        (value[0] as num).toDouble(),
+        (value[1] as num).toDouble(),
+        (value[2] as num).toDouble(),
+      );
+    }
+    throw FormatException(
+        'Expected a position as {x,y,z} or [x,y,z], got: $value');
   }
 }

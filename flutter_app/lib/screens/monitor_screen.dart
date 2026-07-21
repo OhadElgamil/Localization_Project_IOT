@@ -2,7 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/localization_result.dart';
+import '../models/optitrack_result.dart';
 import '../providers/connection_provider.dart';
+import '../providers/optitrack_provider.dart';
+import '../services/optitrack_service.dart';
 
 class MonitorScreen extends StatefulWidget {
   const MonitorScreen({super.key});
@@ -30,6 +33,10 @@ class _MonitorScreenState extends State<MonitorScreen> {
   // slow HTTP round trip (network hiccup, server hang) could otherwise let
   // ticks pile up into a growing backlog of concurrent requests.
   bool _requestInFlight = false;
+
+  OptiTrackResult? _optitrackResult;
+  String? _optitrackError;
+  bool _isSendingToOptiTrack = false;
 
   static const _pollInterval = Duration(milliseconds: 100);
 
@@ -82,6 +89,33 @@ class _MonitorScreenState extends State<MonitorScreen> {
     }
   }
 
+  Future<void> _sendToOptiTrack() async {
+    final result = _lastGoodResult;
+    if (result == null || _isSendingToOptiTrack) return;
+    final optitrack = context.read<OptiTrackProvider>();
+    setState(() {
+      _isSendingToOptiTrack = true;
+      _optitrackError = null;
+    });
+    try {
+      // The server retries internally until OptiTrack answers, so this can
+      // take a while -- see optitrack_server/server.py.
+      final comparison = await optitrack.service.compare(
+        x: result.x,
+        y: result.y,
+        z: result.z,
+      );
+      if (!mounted) return;
+      setState(() => _optitrackResult = comparison);
+    } on OptiTrackServiceException catch (e) {
+      if (mounted) setState(() => _optitrackError = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _optitrackError = '$e');
+    } finally {
+      if (mounted) setState(() => _isSendingToOptiTrack = false);
+    }
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
@@ -124,7 +158,13 @@ class _MonitorScreenState extends State<MonitorScreen> {
             _StaleBanner(message: _statusMessage!),
           Expanded(
             child: _lastGoodResult != null
-                ? _LocalizationDisplay(result: _lastGoodResult!)
+                ? _LocalizationDisplay(
+                    result: _lastGoodResult!,
+                    optitrackResult: _optitrackResult,
+                    optitrackError: _optitrackError,
+                    isSendingToOptiTrack: _isSendingToOptiTrack,
+                    onSendToOptiTrack: _sendToOptiTrack,
+                  )
                 : _statusMessage != null
                     ? _ErrorState(message: _statusMessage!)
                     : _IdleState(
@@ -342,7 +382,18 @@ class _StaleBanner extends StatelessWidget {
 
 class _LocalizationDisplay extends StatelessWidget {
   final LocalizationResult result;
-  const _LocalizationDisplay({required this.result});
+  final OptiTrackResult? optitrackResult;
+  final String? optitrackError;
+  final bool isSendingToOptiTrack;
+  final VoidCallback onSendToOptiTrack;
+
+  const _LocalizationDisplay({
+    required this.result,
+    required this.optitrackResult,
+    required this.optitrackError,
+    required this.isSendingToOptiTrack,
+    required this.onSendToOptiTrack,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -386,8 +437,91 @@ class _LocalizationDisplay extends StatelessWidget {
           ],
           const SizedBox(height: 24),
           _ConfidenceBar(confidence: result.confidence),
+          const SizedBox(height: 24),
+          const Divider(),
+          const SizedBox(height: 16),
+          _OptiTrackSection(
+            optitrackResult: optitrackResult,
+            optitrackError: optitrackError,
+            isSending: isSendingToOptiTrack,
+            onSend: onSendToOptiTrack,
+          ),
         ],
       ),
+    );
+  }
+}
+
+class _OptiTrackSection extends StatelessWidget {
+  final OptiTrackResult? optitrackResult;
+  final String? optitrackError;
+  final bool isSending;
+  final VoidCallback onSend;
+
+  const _OptiTrackSection({
+    required this.optitrackResult,
+    required this.optitrackError,
+    required this.isSending,
+    required this.onSend,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final result = optitrackResult;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Ground Truth (OptiTrack)',
+            style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: isSending ? null : onSend,
+            icon: isSending
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.rule),
+            label: Text(isSending
+                ? 'Waiting for OptiTrack…'
+                : 'Send to OptiTrack'),
+          ),
+        ),
+        if (optitrackError != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            optitrackError!,
+            style: TextStyle(color: cs.error, fontSize: 13),
+          ),
+        ],
+        if (result != null) ...[
+          const SizedBox(height: 16),
+          _InfoRow(
+            icon: Icons.straighten,
+            label: 'Error',
+            value: '${(result.errorM * 100).toStringAsFixed(1)} cm',
+          ),
+          const SizedBox(height: 12),
+          _InfoRow(
+            icon: Icons.my_location,
+            label: 'OptiTrack position',
+            value:
+                '(${result.groundTruthX.toStringAsFixed(3)}, ${result.groundTruthY.toStringAsFixed(3)}, ${result.groundTruthZ.toStringAsFixed(3)})',
+          ),
+          if (result.failedAttempts > 0) ...[
+            const SizedBox(height: 12),
+            _InfoRow(
+              icon: Icons.bug_report_outlined,
+              label: 'OptiTrack retries needed',
+              value: '${result.failedAttempts}',
+            ),
+          ],
+        ],
+      ],
     );
   }
 }

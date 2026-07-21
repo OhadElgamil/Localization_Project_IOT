@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/connection_provider.dart';
+import '../providers/optitrack_provider.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -15,18 +16,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _portCtrl;
   final _formKey = GlobalKey<FormState>();
 
+  late final TextEditingController _optitrackHostCtrl;
+  late final TextEditingController _optitrackPortCtrl;
+  final _optitrackFormKey = GlobalKey<FormState>();
+
   @override
   void initState() {
     super.initState();
     final conn = context.read<ConnectionProvider>();
     _hostCtrl = TextEditingController(text: conn.host);
     _portCtrl = TextEditingController(text: '${conn.port}');
+
+    final optitrack = context.read<OptiTrackProvider>();
+    _optitrackHostCtrl = TextEditingController(text: optitrack.host);
+    _optitrackPortCtrl = TextEditingController(text: '${optitrack.port}');
   }
 
   @override
   void dispose() {
     _hostCtrl.dispose();
     _portCtrl.dispose();
+    _optitrackHostCtrl.dispose();
+    _optitrackPortCtrl.dispose();
     super.dispose();
   }
 
@@ -55,10 +66,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _saveOptiTrack() async {
+    if (!_optitrackFormKey.currentState!.validate()) return;
+    final host = _optitrackHostCtrl.text.trim();
+    final port = int.parse(_optitrackPortCtrl.text.trim());
+    await context.read<OptiTrackProvider>().updateConnection(host, port);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('OptiTrack settings saved.')),
+      );
+    }
+  }
+
+  Future<void> _testOptiTrackConnection() async {
+    final optitrack = context.read<OptiTrackProvider>();
+    final ok = await optitrack.checkConnection();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(ok ? 'Connected to OptiTrack server!' : 'Could not reach OptiTrack server.'),
+          backgroundColor: ok ? Colors.green : Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final conn = context.watch<ConnectionProvider>();
+    final optitrack = context.watch<OptiTrackProvider>();
 
     return Scaffold(
       appBar: AppBar(
@@ -145,6 +182,79 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Text('Pi Status', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 12),
           _StatusCard(conn: conn),
+          const SizedBox(height: 32),
+          const Divider(),
+          const SizedBox(height: 16),
+          Text('OptiTrack Ground Truth Connection',
+              style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 16),
+          Form(
+            key: _optitrackFormKey,
+            child: Column(
+              children: [
+                TextFormField(
+                  controller: _optitrackHostCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'OptiTrack Server IP Address',
+                    hintText: '192.168.1.101',
+                    prefixIcon: Icon(Icons.router_outlined),
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.url,
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return 'Required';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _optitrackPortCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Port',
+                    hintText: '5002',
+                    prefixIcon: Icon(Icons.lan_outlined),
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return 'Required';
+                    final n = int.tryParse(v.trim());
+                    if (n == null || n < 1 || n > 65535) {
+                      return 'Enter a valid port (1–65535)';
+                    }
+                    return null;
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: optitrack.isChecking ? null : _testOptiTrackConnection,
+                  icon: optitrack.isChecking
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.wifi_find_outlined),
+                  label: const Text('Test'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _saveOptiTrack,
+                  icon: const Icon(Icons.save),
+                  label: const Text('Save'),
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 32),
           const Divider(),
           const SizedBox(height: 16),

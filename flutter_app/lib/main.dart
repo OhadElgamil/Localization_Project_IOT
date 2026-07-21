@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/connection_provider.dart';
 import 'providers/markers_provider.dart';
+import 'providers/optitrack_provider.dart';
 import 'screens/main_screen.dart';
 
 void main() {
@@ -11,6 +12,7 @@ void main() {
       providers: [
         ChangeNotifierProvider(create: (_) => ConnectionProvider()),
         ChangeNotifierProvider(create: (_) => MarkersProvider()),
+        ChangeNotifierProvider(create: (_) => OptiTrackProvider()),
       ],
       child: const ArucoLocalizerApp(),
     ),
