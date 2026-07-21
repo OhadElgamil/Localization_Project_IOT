@@ -23,7 +23,7 @@ CAMERA_TCP_PORT = 5000
 # Runs on 5001, not 5000, since the camera TCP server above owns port 5000.
 API_BASE_URL = "http://127.0.0.1:5001"
 
-MAX_TRIANGULATION_MARKERS = 7  # localization.py trilaterates every 3-marker
+MAX_TRIANGULATION_MARKERS = 11  # localization.py trilaterates every 3-marker
                                 # combination among the closest N seen this
                                 # cycle and fuses the results; N is capped
                                 # here since combinations grow fast (C(N,3):
@@ -37,6 +37,8 @@ SNAP_TIMEOUT_S = 1.5       # per-camera SNAP round trip timeout: cameras are now
                            # single flaky camera can't false-flag the whole
                            # pipeline as disconnected -- it's just skipped for
                            # that cycle instead, and picked up again next time.
+FRAME_CACHE_TTL_S = 2.0    # If a camera fails to snap this cycle, reuse its last
+                           # frame's detections if they are younger than this timeout.
 CYCLE_SLEEP_S = 0.05       # gap between sampling cycles
 
 # "DEBUG" logs every raw detection, distance, candidate pose, and POST
@@ -56,7 +58,7 @@ MARKERS_FILE = os.path.join(REPO_ROOT, "flutter_app", "pi_server", "markers.json
 # ArUco / camera intrinsics
 # ---------------------------------------------------------------------------
 ARUCO_DICT = cv2.aruco.DICT_4X4_1000
-MARKER_SIZE_M = 0.175  # must match the physical markers on the wall
+MARKER_SIZE_M = 0.1915  # must match the physical markers on the wall
 
 # Per-camera calibration produced by calibration/calibration.py
 # (np.savez with camera_matrix + dist_coeffs). Filename must be calibration_data_ID.npz
@@ -65,8 +67,8 @@ MARKER_SIZE_M = 0.175  # must match the physical markers on the wall
 # intrinsics are derived from each captured frame's actual shape instead.
 CALIBRATION_DIR = os.path.join(PIPELINE_DIR, "calibration_data")
 
-PICAM_WIDTH = 800
-PICAM_HEIGHT = 600
+PICAM_WIDTH = 1600
+PICAM_HEIGHT = 1200
 
 # ---------------------------------------------------------------------------
 # Camera extrinsics: where each camera is mounted relative to the robot's own
@@ -90,10 +92,10 @@ PICAM_HEIGHT = 600
 # specific numbers are just this rig's measurements.
 # ---------------------------------------------------------------------------
 CAMERA_EXTRINSICS_RAW = {
-    "FRONT": {"translation_m": (0.05, 0.0, 0.0), "rpy_deg": (0.0, 0.0, -90.0)},
-    "LEFT":  {"translation_m": (0.0, 0.0, -0.05), "rpy_deg": (0.0, 0.0, 0.0)},
-    "RIGHT": {"translation_m": (0.0, 0.0, 0.05), "rpy_deg": (0.0, 0.0, 180.0)},
-    "PICAM": {"translation_m": (-0.05, 0.0, 0.0), "rpy_deg": (0.0, 0.0, 90.0)},
+    "FRONT": {"translation_m": (0.0, 0.0, -0.05), "rpy_deg": (0.0, 0.0, 0.0)},
+    "LEFT":  {"translation_m": (-0.05, 0.0, 0.0), "rpy_deg": (0.0, 0.0, 90.0)},
+    "RIGHT": {"translation_m": (0.05, 0.0, 0.0), "rpy_deg": (0.0, 0.0, -90.0)},
+    "PICAM": {"translation_m": (0.0, 0.0, 0.05), "rpy_deg": (0.0, 0.0, 180.0)},
 }
 
 # Sampling order. CameraManager.available_cameras() decides what's actually

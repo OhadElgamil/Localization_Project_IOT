@@ -244,12 +244,14 @@ class CameraManager:
         try:
             from picamera2 import Picamera2  # type: ignore
             self._picam = Picamera2()
-            still_config = self._picam.create_still_configuration()
+            still_config = self._picam.create_still_configuration(
+                main={"size": (self.config.PICAM_WIDTH, self.config.PICAM_HEIGHT)}
+            )
             self._picam.configure(still_config)
             self._picam.start()
             time.sleep(1.0)  # let auto-exposure settle
             self._picam_mode = "picamera2"
-            logger.info("PiCam: using picamera2")
+            logger.info("PiCam: using picamera2 at %dx%d", self.config.PICAM_WIDTH, self.config.PICAM_HEIGHT)
             return
         except Exception as e:
             logger.info("PiCam: picamera2 unavailable (%s)", e)

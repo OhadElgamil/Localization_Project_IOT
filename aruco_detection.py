@@ -8,9 +8,18 @@ def main():
     parser = argparse.ArgumentParser(description="ArUco Marker Pose Estimator")
     parser.add_argument("image", help="Path to the image file")
     parser.add_argument("marker_size", type=float, help="Size of the marker in meters (e.g., 0.05 for 5cm)")
-    parser.add_argument("--calib", type=str, default="calibration_data.npz", help="Path to calibration data file")
+    parser.add_argument("--name", type=str, help="Name of the camera (e.g., FRONT, LEFT, RIGHT, PI)")
+    parser.add_argument("--calib", type=str, default=None, help="Path to calibration data file (overrides --name)")
     parser.add_argument("--uncalib", action="store_true", help="Force using the default camera matrix guess instead of calibration data")
     args = parser.parse_args()
+
+    # Determine calibration path
+    calib_path = "calibration_data.npz"
+    if args.calib:
+        calib_path = args.calib
+    elif args.name:
+        cam_id = "PI" if args.name.upper() == "PICAM" else args.name.upper()
+        calib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline", "calibration_data", f"calibration_data_{cam_id}.npz")
 
     img = cv2.imread(args.image)
     if img is None:
@@ -18,9 +27,9 @@ def main():
         return
         
     # Load actual calibration data if available and not forced to bypass
-    if not args.uncalib and os.path.exists(args.calib):
-        print(f"Loading calibration from {args.calib}")
-        data = np.load(args.calib)
+    if not args.uncalib and os.path.exists(calib_path):
+        print(f"Loading calibration from {calib_path}")
+        data = np.load(calib_path)
         camera_matrix = data["camera_matrix"]
         dist_coeffs = data["dist_coeffs"]
         

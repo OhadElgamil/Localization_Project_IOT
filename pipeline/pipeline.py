@@ -36,6 +36,7 @@ def run():
     logger.info("Pipeline running (log level=%s). Waiting for cameras to connect...", config.LOG_LEVEL)
 
     cycle = 0
+    last_detections = {}  # name -> (timestamp, detections)
     try:
         while True:
             available = set(camera_manager.available_cameras())
@@ -55,8 +56,17 @@ def run():
                     for future in concurrent.futures.as_completed(future_to_name):
                         name = future_to_name[future]
                         frame = future.result()
+                        current_time = time.monotonic()
                         if frame is not None:
-                            detections.extend(detector.detect(name, frame))
+                            cam_detections = detector.detect(name, frame)
+                            last_detections[name] = (current_time, cam_detections)
+                            detections.extend(cam_detections)
+                        else:
+                            if name in last_detections:
+                                cache_time, cam_detections = last_detections[name]
+                                if (current_time - cache_time) <= config.FRAME_CACHE_TTL_S:
+                                    logger.debug("[%s] frame dropped, reusing cached detections from %.2fs ago", name, current_time - cache_time)
+                                    detections.extend(cam_detections)
 
             camera_times = camera_manager.response_times()
             logger.debug("cycle %d: cameras=%s detections=%d times=%s", cycle, names, len(detections), camera_times)

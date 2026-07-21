@@ -122,8 +122,21 @@ def capture_local_pi_cam(width, height):
 def capture_loop(conn, img_dir, use_pi_cam=False, width=800, height=600):
     os.makedirs(img_dir, exist_ok=True)
     count = 0
+    
+    picam2 = None
     if use_pi_cam:
-        safe_print("\nLocal Pi Camera mode. Press 'e' to capture local image, 's' to stop and calibrate, 'q' to quit.")
+        safe_print(f"\nLocal Pi Camera mode ({width}x{height}). Press 'e' to capture, 's' to stop, 'q' to quit.")
+        try:
+            from picamera2 import Picamera2
+            picam2 = Picamera2()
+            config = picam2.create_still_configuration(main={"size": (width, height)})
+            picam2.configure(config)
+            picam2.start()
+            import time
+            time.sleep(1.0)
+            safe_print("✅ Successfully initialized picamera2!")
+        except Exception as e:
+            safe_print(f"⚠️ picamera2 unavailable, falling back to slow subprocess mode: {e}")
     else:
         safe_print("\nESP32-CAM TCP mode. Press 'e' to capture image from ESP, 's' to stop and calibrate, 'q' to quit.")
 
@@ -138,9 +151,17 @@ def capture_loop(conn, img_dir, use_pi_cam=False, width=800, height=600):
             char = sys.stdin.read(1)
 
             if char in ("e", "E"):
-                safe_print("'e' received - requesting image, please wait...")
+                safe_print("'e' received - capturing image...")
                 if use_pi_cam:
-                    frame = capture_local_pi_cam(width, height)
+                    if picam2 is not None:
+                        try:
+                            arr = picam2.capture_array()
+                            frame = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+                        except Exception as e:
+                            safe_print(f"Capture failed: {e}")
+                            frame = None
+                    else:
+                        frame = capture_local_pi_cam(width, height)
                 else:
                     frame = snap(conn)
                 if frame is None:

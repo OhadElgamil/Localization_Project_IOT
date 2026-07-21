@@ -25,7 +25,7 @@ from contracts import LocalizationResult, INSUFFICIENT_MARKERS_ERROR
 
 logger = logging.getLogger("pipeline.localization")
 
-MIN_MARKERS = 3
+MIN_MARKERS = 1
 TRIPLET_SIZE = 3
 MAX_MARKERS = 7
 
