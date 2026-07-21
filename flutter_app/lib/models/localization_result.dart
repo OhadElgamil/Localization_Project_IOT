@@ -11,6 +11,11 @@ class LocalizationResult {
   // A missing entry or null value means that camera hasn't responded yet
   // this cycle (still in flight) -- it's not disconnected, just slow.
   final Map<String, double?> cameraResponseTimes;
+  // The pipeline's own cycle rate (sample + detect + localize + post),
+  // windowed-averaged pipeline-side (see pipeline/fps_tracker.py). Null
+  // means the pipeline hasn't reported one yet (just started, or the
+  // connection is stale -- see pi_server/server.py's staleness check).
+  final double? fps;
   // Set when the Pi couldn't compute a position this cycle (e.g. fewer than
   // 3 barcodes visible) -- x/y/z/yaw are meaningless (zeroed) when this is set.
   final String? error;
@@ -25,6 +30,7 @@ class LocalizationResult {
     required this.markersDetected,
     this.markerIds = const [],
     this.cameraResponseTimes = const {},
+    this.fps,
     this.error,
   });
 
@@ -47,6 +53,7 @@ class LocalizationResult {
           .toList(),
       cameraResponseTimes: (times ?? const {})
           .map((name, v) => MapEntry(name, (v as num?)?.toDouble())),
+      fps: (json['fps'] as num?)?.toDouble(),
       error: json['error'] as String?,
     );
   }

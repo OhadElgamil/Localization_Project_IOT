@@ -107,7 +107,7 @@ class TestTriangulation(unittest.TestCase):
         extrinsics = identity_extrinsics(["FRONT"])
         detections = [fabricate_detection(mid, "FRONT", mm, T_true, extrinsics) for mid in (1, 2, 3)]
 
-        result = localization.estimate(detections, mm, extrinsics)
+        result = localization.estimate_least_squares(detections, mm, extrinsics)
         self.assertEqual(result.markers_detected, 3)
         assert_pose_close(self, result, true_pos, true_rpy_deg)
 
@@ -127,7 +127,7 @@ class TestTriangulation(unittest.TestCase):
         extrinsics = identity_extrinsics(["FRONT"])
         detections = [fabricate_detection(mid, "FRONT", mm, T_true, extrinsics) for mid in (1, 2, 3)]
 
-        result = localization.estimate(detections, mm, extrinsics)
+        result = localization.estimate_least_squares(detections, mm, extrinsics)
         self.assertEqual(result.markers_detected, 3)
         assert_pose_close(self, result, true_pos, true_rpy_deg)
 
@@ -153,7 +153,7 @@ class TestTriangulation(unittest.TestCase):
                                  T_marker_cam=homogeneous(np.eye(3), np.array([0.0, 0.0, 999.0])))
         detections.append(decoy)
 
-        result = localization.estimate(detections, mm, extrinsics, max_markers=3)
+        result = localization.estimate_least_squares(detections, mm, extrinsics, max_markers=3)
         self.assertEqual(result.markers_detected, 3)
         self.assertNotIn(99, result.marker_ids)
         assert_pose_close(self, result, true_pos, true_rpy_deg)
@@ -163,7 +163,10 @@ class TestTriangulation(unittest.TestCase):
         is trilaterated and fused. Since these fabricated detections are all
         exactly consistent with one ground-truth pose (no measurement
         noise), every triplet independently recovers the same true pose, so
-        the combined estimate should too."""
+        the combined estimate should too. This exercises estimate_triplets
+        specifically (the legacy multi-triplet strategy) -- estimate_least_
+        squares, the current production default, doesn't form triplets at
+        all, so this triplet-combination path has its own test."""
         true_pos = (2.0, 0.5, -3.0)
         true_rpy_deg = (0.0, 0.0, 40.0)
         T_true = ground_truth_pose(true_pos, true_rpy_deg)
@@ -177,8 +180,34 @@ class TestTriangulation(unittest.TestCase):
         extrinsics = identity_extrinsics(["FRONT"])
         detections = [fabricate_detection(mid, "FRONT", mm, T_true, extrinsics) for mid in (1, 2, 3, 4)]
 
-        result = localization.estimate(detections, mm, extrinsics)  # default max_markers=7
+        result = localization.estimate_triplets(detections, mm, extrinsics)  # default max_markers=7
         self.assertEqual(result.markers_detected, 4)
+        assert_pose_close(self, result, true_pos, true_rpy_deg)
+
+    def test_one_bad_marker_among_many_is_outvoted(self):
+        """7 markers: 6 consistent with the true pose, 1 (id=7) fabricated
+        from a wildly different pose (simulating a bad map entry or a
+        misdetection). Triplets not touching marker 7 are the majority
+        (C(6,3)=20 of the 35 total) and all recover the true pose exactly,
+        so the median-based outlier guard in _combine_triplets should reject
+        the marker-7-touching triplets rather than let them drag the fused
+        result away from true_pos. estimate_triplets specifically, since
+        this outlier guard lives in the triplet-combination path."""
+        true_pos = (2.0, 0.5, -3.0)
+        true_rpy_deg = (0.0, 0.0, 40.0)
+        T_true = ground_truth_pose(true_pos, true_rpy_deg)
+        T_bad = ground_truth_pose((true_pos[0] + 5.0, true_pos[1], true_pos[2] + 5.0), true_rpy_deg)
+
+        mm = make_marker_map(self, [
+            {"id": mid, "x": float(mid), "y": 0.0, "z": float(mid)} for mid in range(1, 7)
+        ] + [{"id": 7, "x": 7.0, "y": 0.0, "z": 7.0}])
+        extrinsics = identity_extrinsics(["FRONT"])
+
+        detections = [fabricate_detection(mid, "FRONT", mm, T_true, extrinsics) for mid in range(1, 7)]
+        detections.append(fabricate_detection(7, "FRONT", mm, T_bad, extrinsics))
+
+        result = localization.estimate_triplets(detections, mm, extrinsics)  # default max_markers=7
+        self.assertNotIn(7, result.marker_ids)
         assert_pose_close(self, result, true_pos, true_rpy_deg)
 
     def test_default_pool_still_excludes_far_decoy(self):
@@ -200,12 +229,34 @@ class TestTriangulation(unittest.TestCase):
                                  T_marker_cam=homogeneous(np.eye(3), np.array([0.0, 0.0, 999.0])))
         detections.append(decoy)
 
-        result = localization.estimate(detections, mm, extrinsics)  # default max_markers=7
+        result = localization.estimate_least_squares(detections, mm, extrinsics)  # default max_markers=7
         self.assertEqual(result.markers_detected, 7)
         self.assertNotIn(99, result.marker_ids)
         assert_pose_close(self, result, true_pos, true_rpy_deg)
 
-    def test_fewer_than_three_markers_is_an_error(self):
+    def test_zero_markers_is_an_error(self):
+        """MIN_MARKERS=1: estimate_least_squares only needs a single visible
+        marker to produce an estimate (see test_one_or_two_markers_still_
+        produce_an_estimate below) -- zero is the actual floor now, not
+        three."""
+        mm = make_marker_map(self, [
+            {"id": 1, "x": 0.0, "y": 0.0, "z": 0.0},
+            {"id": 2, "x": 5.0, "y": 0.0, "z": 0.0},
+        ])
+        extrinsics = identity_extrinsics(["FRONT"])
+
+        result = localization.estimate_least_squares([], mm, extrinsics)
+        self.assertEqual(result.error, INSUFFICIENT_MARKERS_ERROR)
+        self.assertIsNone(result.position)
+        self.assertIsNone(result.orientation)
+        self.assertEqual(result.markers_detected, 0)
+
+    def test_one_or_two_markers_still_produce_an_estimate(self):
+        """Unlike estimate_triplets (needs at least TRIPLET_SIZE=3 markers to
+        form even one triplet), estimate_least_squares' single robust solve
+        over the whole pool works down to MIN_MARKERS=1 -- with exactly-
+        consistent fabricated detections, it still recovers the true pose
+        even from just 1 or 2 markers."""
         true_pos = (2.0, 0.5, -3.0)
         true_rpy_deg = (0.0, 0.0, 40.0)
         T_true = ground_truth_pose(true_pos, true_rpy_deg)
@@ -216,15 +267,14 @@ class TestTriangulation(unittest.TestCase):
         ])
         extrinsics = identity_extrinsics(["FRONT"])
 
-        for n in (0, 1, 2):
+        for n in (1, 2):
             with self.subTest(n=n):
                 detections = [fabricate_detection(mid, "FRONT", mm, T_true, extrinsics)
                               for mid in (1, 2)[:n]]
-                result = localization.estimate(detections, mm, extrinsics)
-                self.assertEqual(result.error, INSUFFICIENT_MARKERS_ERROR)
-                self.assertIsNone(result.position)
-                self.assertIsNone(result.orientation)
+                result = localization.estimate_least_squares(detections, mm, extrinsics)
+                self.assertIsNone(result.error)
                 self.assertEqual(result.markers_detected, n)
+                assert_pose_close(self, result, true_pos, true_rpy_deg)
 
     def test_non_identity_camera_extrinsics(self):
         """Each marker seen by a different, non-identity-mounted camera --
@@ -251,7 +301,7 @@ class TestTriangulation(unittest.TestCase):
             fabricate_detection(3, "RIGHT", mm, T_true, extrinsics),
         ]
 
-        result = localization.estimate(detections, mm, extrinsics)
+        result = localization.estimate_least_squares(detections, mm, extrinsics)
         self.assertEqual(result.markers_detected, 3)
         assert_pose_close(self, result, true_pos, true_rpy_deg)
 
@@ -278,7 +328,7 @@ class TestTriangulation(unittest.TestCase):
                       fabricate_detection(2, "FRONT", mm, T_true, extrinsics),
                       fabricate_detection(3, "FRONT", mm, T_true, extrinsics)]
 
-        result = localization.estimate(detections, mm, extrinsics)
+        result = localization.estimate_least_squares(detections, mm, extrinsics)
         assert_pose_close(self, result, true_pos, true_rpy_deg)
 
 

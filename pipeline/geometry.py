@@ -93,9 +93,21 @@ def extrinsic_transform(translation_m, rpy_deg) -> np.ndarray:
     return homogeneous(R, np.asarray(translation_m, dtype=float))
 
 
-def multilaterate(positions, distances, initial_guess, iterations=50, use_huber=False, huber_delta=0.5) -> np.ndarray:
+def multilaterate(positions, distances, initial_guess, iterations=50, use_huber=False, huber_delta=0.5,
+                   weights=None) -> np.ndarray:
     """Levenberg-Marquardt solve for the point whose distance to each
     `positions[i]` best matches `distances[i]` in a least-squares sense.
+
+    `weights` (optional, one per position/distance pair) is a *prior* on how
+    much each measurement should count -- e.g. a marker that was small or
+    far away in frame gives a noisier range than a close, sharp one, and
+    should pull the solution less regardless of how well it happens to fit
+    this particular cycle. This is independent from (and composes with)
+    `use_huber`'s per-residual robustness weighting: huber down-weights a
+    point *because* its residual turned out large after the fact, while
+    `weights` down-weights it up front based on measurement quality alone.
+    Omitting it (the default) weights every point equally, same as before
+    this parameter existed.
 
     Wall-mounted markers at a consistent height are a completely realistic
     layout, but that makes them coplanar -- which makes plain Gauss-Newton
@@ -111,6 +123,10 @@ def multilaterate(positions, distances, initial_guess, iterations=50, use_huber=
     """
     positions = np.asarray(positions, dtype=float)
     distances = np.asarray(distances, dtype=float)
+    # Prior per-point weight (measurement-quality based, constant across
+    # iterations) -- kept separate from huber's per-residual robustness
+    # weight below; the two multiply together into one effective weight.
+    prior_w = np.ones(len(positions)) if weights is None else np.asarray(weights, dtype=float)
     p = np.array(initial_guess, dtype=float)
     lam = 1e-2
 
@@ -126,9 +142,9 @@ def multilaterate(positions, distances, initial_guess, iterations=50, use_huber=
             c = np.zeros_like(r_at)
             c[~mask] = r_at[~mask]**2
             c[mask] = 2.0 * huber_delta * abs_r[mask] - huber_delta**2
-            return float(np.sum(c))
+            return float(np.sum(prior_w * c))
         else:
-            return float(r_at @ r_at)
+            return float(np.sum(prior_w * r_at**2))
 
     r = residuals_at(p)
     cost = cost_at(r)
@@ -140,19 +156,19 @@ def multilaterate(positions, distances, initial_guess, iterations=50, use_huber=
         J = diffs / ranges[:, None]
 
         if use_huber:
-            weights = np.ones_like(r)
+            huber_w = np.ones_like(r)
             abs_r = np.abs(r)
             mask = abs_r > huber_delta
-            weights[mask] = huber_delta / abs_r[mask]
-            
-            sqrt_w = np.sqrt(weights)
-            Jw = J * sqrt_w[:, None]
-            rw = r * sqrt_w
-            JTJ = Jw.T @ Jw
-            JTr = Jw.T @ rw
+            huber_w[mask] = huber_delta / abs_r[mask]
+            total_w = prior_w * huber_w
         else:
-            JTJ = J.T @ J
-            JTr = J.T @ r
+            total_w = prior_w
+
+        sqrt_w = np.sqrt(total_w)
+        Jw = J * sqrt_w[:, None]
+        rw = r * sqrt_w
+        JTJ = Jw.T @ Jw
+        JTr = Jw.T @ rw
 
         step = None
         for _ in range(12):  # inner loop: grow damping until a step actually helps

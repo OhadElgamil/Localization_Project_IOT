@@ -29,6 +29,10 @@ class _MonitorScreenState extends State<MonitorScreen> {
   int? _markersSeen;
   List<int> _markerIds = const [];
   Map<String, double?> _cameraTimes = const {};
+  // Pipeline's own cycle rate, updated from every response like
+  // _markersSeen -- most useful exactly when things are going wrong, so it
+  // shouldn't only track the last *good* result.
+  double? _fps;
   // Guards against overlapping requests: at a 150ms poll interval, a single
   // slow HTTP round trip (network hiccup, server hang) could otherwise let
   // ticks pile up into a growing backlog of concurrent requests.
@@ -72,12 +76,14 @@ class _MonitorScreenState extends State<MonitorScreen> {
           _markersSeen = result.markersDetected;
           _markerIds = result.markerIds;
           _cameraTimes = result.cameraResponseTimes;
+          _fps = result.fps;
         } else {
           _statusMessage = null;
           _lastGoodResult = result;
           _markersSeen = result.markersDetected;
           _markerIds = result.markerIds;
           _cameraTimes = result.cameraResponseTimes;
+          _fps = result.fps;
         }
       });
     } catch (e) {
@@ -148,6 +154,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
             isPolling: _isPolling,
             isConnected: conn.isConnected,
             lastUpdate: _lastGoodResult?.timestamp,
+            fps: _fps,
           ),
           _MarkersSeenBar(count: _markersSeen, ids: _markerIds),
           _CameraTimingsBar(times: _cameraTimes),
@@ -183,11 +190,15 @@ class _PollingStatusBar extends StatelessWidget {
   final bool isPolling;
   final bool isConnected;
   final DateTime? lastUpdate;
+  // Pipeline's own cycle rate (see pipeline/fps_tracker.py) -- how fast the
+  // Pi itself is producing new positions, independent of our poll interval.
+  final double? fps;
 
   const _PollingStatusBar({
     required this.isPolling,
     required this.isConnected,
     this.lastUpdate,
+    this.fps,
   });
 
   @override
@@ -225,13 +236,21 @@ class _PollingStatusBar extends StatelessWidget {
             ),
           const SizedBox(width: 8),
           Text(label, style: const TextStyle(fontSize: 13)),
-          if (lastUpdate != null) ...[
-            const Spacer(),
+          const Spacer(),
+          if (fps != null) ...[
+            Icon(Icons.speed, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            const SizedBox(width: 4),
+            Text(
+              '${fps!.toStringAsFixed(1)} FPS',
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(width: 12),
+          ],
+          if (lastUpdate != null)
             Text(
               'Last: ${_fmt(lastUpdate!)}',
               style: const TextStyle(fontSize: 11),
             ),
-          ],
         ],
       ),
     );
@@ -427,14 +446,6 @@ class _LocalizationDisplay extends StatelessWidget {
             label: 'Markers detected',
             value: '${result.markersDetected}',
           ),
-          if (result.yaw != null) ...[
-            const SizedBox(height: 12),
-            _InfoRow(
-              icon: Icons.rotate_right,
-              label: 'Yaw',
-              value: '${result.yaw!.toStringAsFixed(2)} °',
-            ),
-          ],
           const SizedBox(height: 24),
           _ConfidenceBar(confidence: result.confidence),
           const SizedBox(height: 24),

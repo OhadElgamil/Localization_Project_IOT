@@ -150,9 +150,17 @@ def fuse(candidates, use_huber=False, huber_delta=0.5):
     # residual = best_residual
     # ------------------------------------------------
 
+    # Sensor-quality proxy shared by both the position and orientation
+    # solves below: a marker that was closer/larger in frame gives a sharper
+    # corner (and thus range/angle) measurement than a small, distant one,
+    # so it should pull the fused pose harder. This is a *prior* weight and
+    # composes with use_huber's own per-residual robustness weighting rather
+    # than replacing it -- see multilaterate()'s docstring.
+    weights = [1.0 / max(c.distance_m, 1e-3) for c in candidates]
+
     position = multilaterate(
-        positions, robot_distances, initial_guess_base, 
-        use_huber=use_huber, huber_delta=huber_delta
+        positions, robot_distances, initial_guess_base,
+        use_huber=use_huber, huber_delta=huber_delta, weights=weights,
     )
     ranges = np.linalg.norm(position - np.asarray(positions), axis=1)
     residual = float(np.mean(np.abs(ranges - np.asarray(robot_distances))))
@@ -166,10 +174,8 @@ def fuse(candidates, use_huber=False, huber_delta=0.5):
     
     confidence = float(np.clip(base_confidence - marker_penalty, 0.1, 0.99))
 
-    # Weighting for orientation fusion uses raw camera-measured distance
-    # (sensor-quality proxy: closer/larger-in-frame markers give sharper
-    # angle estimates), not the robot-referenced range used for position.
-    weights = [1.0 / max(c.distance_m, 1e-3) for c in candidates]
+    # Same distance-based weights reused for orientation fusion (not the
+    # robot-referenced range used for position -- see comment above).
     rpys = [rotation_matrix_to_euler(T[:3, :3]) for T in poses]
     rpy = tuple(weighted_circular_mean([r[k] for r in rpys], weights) for k in range(3))
 
@@ -190,13 +196,43 @@ def _combine_triplets(results):
     pose, weighted by each triplet's own confidence -- a triplet touching a
     bad/inconsistent marker gets a larger residual (see fuse()) and so a
     lower weight here, letting the well-agreeing triplets outvote it instead
-    of it corrupting a single fixed solve."""
+    of it corrupting a single fixed solve.
+
+    Confidence-weighting alone only *softens* a bad triplet's pull; it never
+    goes to zero, so one wildly wrong marker (bad map entry, misdetection)
+    still biases the average away from the agreeing majority. Before
+    averaging, reject any triplet whose position is a clear outlier relative
+    to the ensemble median -- a robust (median-based, not mean-based) check
+    so a single bad triplet can't skew the very threshold used to catch it.
+    """
     positions = np.array([r.position for r in results])
-    weights = np.array([r.confidence for r in results])
+    base_weights = np.array([r.confidence for r in results])
+
+    median_position = np.median(positions, axis=0)
+    offsets = np.linalg.norm(positions - median_position, axis=1)
+    mad = float(np.median(offsets))
+    # Floor for the degenerate "all triplets agree exactly" case (mad == 0),
+    # where any nonzero offset would otherwise be flagged as an outlier.
+    reject_radius = max(6.0 * mad, 0.05)
+    keep_mask = offsets <= reject_radius
+
+    if not np.any(keep_mask):
+        # Nothing agrees with anything (e.g. too few triplets to form a
+        # meaningful median) -- fall back to using all of them rather than
+        # returning nothing.
+        keep_mask = np.ones(len(results), dtype=bool)
+    elif not np.all(keep_mask):
+        logger.warning(
+            "%d/%d triplets rejected as outliers (>%.2fm from ensemble median %s)",
+            int((~keep_mask).sum()), len(results), reject_radius, _v(median_position, "m"))
+
+    positions = positions[keep_mask]
+    weights = base_weights[keep_mask]
+    kept_results = [r for r, keep in zip(results, keep_mask) if keep]
 
     position = np.average(positions, axis=0, weights=weights)
 
-    rpys = [r.orientation for r in results]
+    rpys = [r.orientation for r in kept_results]
     rpy = tuple(weighted_circular_mean([r[k] for r in rpys], weights) for k in range(3))
 
     # Triplets disagreeing with each other (large spread) is itself a sign
@@ -205,7 +241,7 @@ def _combine_triplets(results):
     spread = float(np.mean(np.std(positions, axis=0)))
     confidence = float(np.clip(np.average(weights) - 0.5 * spread, 0.3, 0.95))
 
-    marker_ids = sorted({mid for r in results for mid in r.marker_ids})
+    marker_ids = sorted({mid for r in kept_results for mid in r.marker_ids})
     return LocalizationResult(
         position=position, orientation=rpy, confidence=confidence,
         markers_detected=len(marker_ids), marker_ids=marker_ids, error=None,

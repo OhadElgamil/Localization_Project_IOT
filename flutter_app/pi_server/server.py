@@ -16,11 +16,12 @@ _localization_result: dict = {
     "markers_detected": 0,
     "marker_ids": [],
     "camera_response_times_s": {},
+    "fps": None,
     "timestamp": datetime.now(timezone.utc).isoformat(),
     "error": "not enough barcodes detected",
 }
 
-def update_localization(x: float = None, y: float = None, z: float = None, yaw: float = 0.0, pitch: float = 0.0, roll: float = 0.0, confidence: float = 1.0, markers_detected: int = 0, marker_ids: list = None, camera_response_times: dict = None, error: str = None) -> None:
+def update_localization(x: float = None, y: float = None, z: float = None, yaw: float = 0.0, pitch: float = 0.0, roll: float = 0.0, confidence: float = 1.0, markers_detected: int = 0, marker_ids: list = None, camera_response_times: dict = None, fps: float = None, error: str = None) -> None:
     if error is not None:
         position = None
         orientation = None
@@ -35,6 +36,7 @@ def update_localization(x: float = None, y: float = None, z: float = None, yaw: 
         "markers_detected": markers_detected,
         "marker_ids": marker_ids or [],
         "camera_response_times_s": camera_response_times or {},
+        "fps": fps,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "error": error,
     })
@@ -89,6 +91,7 @@ def get_localization():
             result["markers_detected"] = 0
             result["marker_ids"] = []
             result["camera_response_times_s"] = {}
+            result["fps"] = None
             result["position"] = None
             result["orientation"] = None
             result["confidence"] = 0.0
@@ -104,6 +107,8 @@ def post_localization():
 
     marker_ids = [int(mid) for mid in data.get("marker_ids", [])]
     camera_response_times = data.get("camera_response_times_s", {})
+    fps = data.get("fps")
+    fps = float(fps) if fps is not None else None
 
     if data.get("error"):
         update_localization(
@@ -111,6 +116,7 @@ def post_localization():
             markers_detected=int(data.get("markers_detected", 0)),
             marker_ids=marker_ids,
             camera_response_times=camera_response_times,
+            fps=fps,
         )
         return jsonify({"success": True}), 201
 
@@ -128,6 +134,7 @@ def post_localization():
             markers_detected=int(data.get("markers_detected", 0)),
             marker_ids=marker_ids,
             camera_response_times=camera_response_times,
+            fps=fps,
             error=None,
         )
     except (KeyError, TypeError, ValueError) as e:
