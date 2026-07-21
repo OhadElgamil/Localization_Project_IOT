@@ -33,6 +33,19 @@ class ArucoDetector:
         self.config = config
         aruco_dict = cv2.aruco.getPredefinedDictionary(config.ARUCO_DICT)
         params = cv2.aruco.DetectorParameters()
+        # Default is CORNER_REFINE_NONE (raw, integer-pixel corners). Sub-pixel
+        # refinement tightens corner localization, which feeds directly into
+        # solvePnP's pose accuracy -- this is close to a free accuracy win.
+        params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+        params.cornerRefinementWinSize = 5
+        params.cornerRefinementMaxIterations = 30
+        params.cornerRefinementMinAccuracy = 0.05
+        # Default (0.03) drops any marker under ~3% of the frame's perimeter,
+        # i.e. markers that are far away or at a shallow angle -- silently
+        # shrinking the usable marker count every cycle. Triangulation only
+        # benefits from more markers, and MAX_TRIANGULATION_MARKERS already
+        # bounds the triplet combinatorics, so let smaller/farther ones through.
+        params.minMarkerPerimeterRate = 0.02
         self._detector = cv2.aruco.ArucoDetector(aruco_dict, params)
 
         half = config.MARKER_SIZE_M / 2.0
@@ -89,6 +102,31 @@ class ArucoDetector:
             self._warned_missing_calibration.add(camera_name)
         return _assumed_intrinsics(frame)
 
+    def _solve_marker_pose(self, image_points, camera_matrix, dist_coeffs):
+        """Solve one marker's pose with IPPE_SQUARE -- the solver built for
+        flat 4-point square markers, instead of the generic iterative solver
+        cv2.solvePnP defaults to. A planar square is inherently ambiguous at
+        shallow viewing angles (two distinct tilts can reproject almost
+        equally well); solvePnPGeneric returns every candidate plus each
+        one's reprojection error, so the genuinely better solution can be
+        picked instead of silently trusting whichever one a single-solution
+        API happens to return.
+        """
+        try:
+            count, rvecs, tvecs, errors = cv2.solvePnPGeneric(
+                self._obj_points, image_points, camera_matrix, dist_coeffs,
+                flags=cv2.SOLVEPNP_IPPE_SQUARE)
+        except cv2.error:
+            count = 0
+        if count:
+            best = int(np.argmin(errors))
+            return rvecs[best], tvecs[best]
+
+        # Fallback for degenerate corner configurations IPPE_SQUARE rejects outright.
+        success, rvec, tvec = cv2.solvePnP(image_points=image_points, objectPoints=self._obj_points,
+                                            cameraMatrix=camera_matrix, distCoeffs=dist_coeffs)
+        return (rvec, tvec) if success else (None, None)
+
     def detect(self, camera_name, frame):
         """Detect all markers in `frame` and return a MarkerDetection per marker."""
         if frame is None:
@@ -99,16 +137,19 @@ class ArucoDetector:
         if ids is None:
             logger.debug("[%s] frame %dx%d: no markers detected", camera_name, frame.shape[1], frame.shape[0])
             return []
+        # Older cv2 returns ids shaped (N, 1); newer builds (e.g.
+        # opencv-contrib-python 5.x) return a flat (N,) array. Normalize once
+        # here so indexing below doesn't care which one we got.
+        ids = np.asarray(ids).reshape(-1)
 
         logger.debug("[%s] frame %dx%d: raw marker ids seen = %s",
-                     camera_name, frame.shape[1], frame.shape[0], [int(i[0]) for i in ids])
+                     camera_name, frame.shape[1], frame.shape[0], [int(i) for i in ids])
 
         detections = []
         for i in range(len(ids)):
-            marker_id = int(ids[i][0])
-            success, rvec, tvec = cv2.solvePnP(
-                self._obj_points, corners[i][0], camera_matrix, dist_coeffs)
-            if not success:
+            marker_id = int(ids[i])
+            rvec, tvec = self._solve_marker_pose(corners[i][0], camera_matrix, dist_coeffs)
+            if rvec is None:
                 logger.warning("[%s] marker %d: solvePnP failed", camera_name, marker_id)
                 continue
 

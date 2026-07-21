@@ -281,6 +281,31 @@ class TestTriangulation(unittest.TestCase):
         result = localization.estimate(detections, mm, extrinsics)
         assert_pose_close(self, result, true_pos, true_rpy_deg)
 
+    def test_one_bad_marker_among_many_is_outvoted(self):
+        """7 markers: 6 consistent with the true pose, 1 (id=7) fabricated
+        from a wildly different pose (simulating a bad map entry or a
+        misdetection). Triplets not touching marker 7 are the majority
+        (C(6,3)=20 of the 35 total) and all recover the true pose exactly,
+        so the median-based outlier guard in _combine_triplets should reject
+        the marker-7-touching triplets rather than let them drag the fused
+        result away from true_pos."""
+        true_pos = (2.0, 0.5, -3.0)
+        true_rpy_deg = (0.0, 0.0, 40.0)
+        T_true = ground_truth_pose(true_pos, true_rpy_deg)
+        T_bad = ground_truth_pose((true_pos[0] + 5.0, true_pos[1], true_pos[2] + 5.0), true_rpy_deg)
+
+        mm = make_marker_map(self, [
+            {"id": mid, "x": float(mid), "y": 0.0, "z": float(mid)} for mid in range(1, 7)
+        ] + [{"id": 7, "x": 7.0, "y": 0.0, "z": 7.0}])
+        extrinsics = identity_extrinsics(["FRONT"])
+
+        detections = [fabricate_detection(mid, "FRONT", mm, T_true, extrinsics) for mid in range(1, 7)]
+        detections.append(fabricate_detection(7, "FRONT", mm, T_bad, extrinsics))
+
+        result = localization.estimate(detections, mm, extrinsics)  # default max_markers=7
+        self.assertNotIn(7, result.marker_ids)
+        assert_pose_close(self, result, true_pos, true_rpy_deg)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

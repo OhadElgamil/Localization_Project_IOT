@@ -93,9 +93,15 @@ def extrinsic_transform(translation_m, rpy_deg) -> np.ndarray:
     return homogeneous(R, np.asarray(translation_m, dtype=float))
 
 
-def multilaterate(positions, distances, initial_guess, iterations=50) -> np.ndarray:
+def multilaterate(positions, distances, initial_guess, weights=None, iterations=50) -> np.ndarray:
     """Levenberg-Marquardt solve for the point whose distance to each
     `positions[i]` best matches `distances[i]` in a least-squares sense.
+
+    `weights` (optional, one per position/distance pair) lets less-trusted
+    measurements pull the solution less hard -- e.g. a marker that was small
+    or far away in frame gives a noisier range than a close, sharp one, and
+    should have proportionally less say. Omitting it (the default) weights
+    every point equally, same as before this parameter existed.
 
     Wall-mounted markers at a consistent height are a completely realistic
     layout, but that makes them coplanar -- which makes plain Gauss-Newton
@@ -111,13 +117,14 @@ def multilaterate(positions, distances, initial_guess, iterations=50) -> np.ndar
     """
     positions = np.asarray(positions, dtype=float)
     distances = np.asarray(distances, dtype=float)
+    sqrt_w = np.ones(len(positions)) if weights is None else np.sqrt(np.asarray(weights, dtype=float))
     p = np.array(initial_guess, dtype=float)
     lam = 1e-2
 
     def residuals_at(point):
         ranges = np.linalg.norm(point - positions, axis=1)
         ranges = np.where(ranges < 1e-9, 1e-9, ranges)
-        return ranges - distances
+        return sqrt_w * (ranges - distances)
 
     r = residuals_at(p)
     cost = float(r @ r)
@@ -126,7 +133,7 @@ def multilaterate(positions, distances, initial_guess, iterations=50) -> np.ndar
         diffs = p - positions
         ranges = np.linalg.norm(diffs, axis=1)
         ranges = np.where(ranges < 1e-9, 1e-9, ranges)
-        J = diffs / ranges[:, None]
+        J = sqrt_w[:, None] * (diffs / ranges[:, None])
         JTJ = J.T @ J
         JTr = J.T @ r
 

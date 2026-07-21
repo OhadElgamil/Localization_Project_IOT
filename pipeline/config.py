@@ -39,6 +39,13 @@ SNAP_TIMEOUT_S = 1.5       # per-camera SNAP round trip timeout: cameras are now
                            # that cycle instead, and picked up again next time.
 CYCLE_SLEEP_S = 0.05       # gap between sampling cycles
 
+# Cross-cycle smoothing (pose_filter.PoseSmoother): how much a new cycle's
+# raw pose is allowed to move the filtered output, scaled by that cycle's
+# own confidence. Low-confidence cycle -> barely nudge the filter; high-
+# confidence cycle -> nearly replace it outright.
+POSE_SMOOTH_MIN_ALPHA = 0.15
+POSE_SMOOTH_MAX_ALPHA = 0.9
+
 # "DEBUG" logs every raw detection, distance, candidate pose, and POST
 # payload -- verbose but exactly what you want while diagnosing bad output.
 # Turn down to "INFO" for quieter day-to-day running once things check out.

@@ -16,6 +16,7 @@ from aruco_localizer import ArucoDetector
 from marker_map import MarkerMap
 import localization
 from api_client import ApiClient
+from pose_filter import PoseSmoother
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL),
@@ -32,6 +33,7 @@ def run():
     marker_map = MarkerMap(config.MARKERS_FILE)
     detector = ArucoDetector(config)
     api = ApiClient(config.API_BASE_URL)
+    smoother = PoseSmoother(config.POSE_SMOOTH_MIN_ALPHA, config.POSE_SMOOTH_MAX_ALPHA)
 
     logger.info("Pipeline running (log level=%s). Waiting for cameras to connect...", config.LOG_LEVEL)
 
@@ -63,6 +65,15 @@ def run():
 
             result = localization.estimate(detections, marker_map, config.T_CAM_ROBOT,
                                             max_markers=config.MAX_TRIANGULATION_MARKERS)
+            if result.error is None:
+                # Smooth successful cycles only; an insufficient-markers cycle
+                # has no position/orientation to feed in, and is expected to
+                # be frequent (see localization.py) rather than a sign the
+                # filter's state has gone stale -- so it's left untouched
+                # rather than reset, and picks back up seamlessly once
+                # markers are visible again.
+                result.position, result.orientation = smoother.update(
+                    result.position, result.orientation, result.confidence)
             api.post_localization(result, camera_response_times=camera_times)  # unconditional: success or error, every cycle
 
             time.sleep(config.CYCLE_SLEEP_S)
