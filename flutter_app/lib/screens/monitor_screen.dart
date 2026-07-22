@@ -4,8 +4,12 @@ import 'package:provider/provider.dart';
 import '../models/localization_result.dart';
 import '../models/optitrack_result.dart';
 import '../providers/connection_provider.dart';
+import '../providers/markers_provider.dart';
 import '../providers/optitrack_provider.dart';
 import '../services/optitrack_service.dart';
+import '../widgets/room_map.dart';
+
+enum _MonitorView { data, map }
 
 class MonitorScreen extends StatefulWidget {
   const MonitorScreen({super.key});
@@ -14,7 +18,8 @@ class MonitorScreen extends StatefulWidget {
   State<MonitorScreen> createState() => _MonitorScreenState();
 }
 
-class _MonitorScreenState extends State<MonitorScreen> {
+class _MonitorScreenState extends State<MonitorScreen>
+    with SingleTickerProviderStateMixin {
   Timer? _timer;
   // Only ever updated with a fully valid (non-error) result, so the display
   // never flickers back to a blank/error screen on a transient hiccup -- we
@@ -38,7 +43,22 @@ class _MonitorScreenState extends State<MonitorScreen> {
   String? _optitrackError;
   bool _isSendingToOptiTrack = false;
 
+  _MonitorView _view = _MonitorView.data;
+  // Drives the map's position-dot blink. Kept running continuously
+  // regardless of connection state -- it's the map painter that ignores it
+  // (renders a static dim dot) whenever the latest fix is stale.
+  late final AnimationController _blinkController;
+
   static const _pollInterval = Duration(milliseconds: 100);
+
+  @override
+  void initState() {
+    super.initState();
+    _blinkController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+  }
 
   void _startPolling() {
     _timer?.cancel();
@@ -116,9 +136,32 @@ class _MonitorScreenState extends State<MonitorScreen> {
     }
   }
 
+  Widget _buildMapView(BuildContext context) {
+    final markersProvider = context.watch<MarkersProvider>();
+    final bounds = markersProvider.roomBounds;
+    if (bounds == null) {
+      return _MapPlaceholder(markerCount: markersProvider.markers.length);
+    }
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: AnimatedBuilder(
+        animation: _blinkController,
+        builder: (context, _) => RoomMapView(
+          bounds: bounds,
+          markers: markersProvider.markers,
+          posX: _lastGoodResult?.x,
+          posZ: _lastGoodResult?.z,
+          isFrozen: _statusMessage != null,
+          blinkOpacity: _blinkController.value,
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
+    _blinkController.dispose();
     super.dispose();
   }
 
@@ -151,27 +194,49 @@ class _MonitorScreenState extends State<MonitorScreen> {
           ),
           _MarkersSeenBar(count: _markersSeen, ids: _markerIds),
           _CameraTimingsBar(times: _cameraTimes),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: SegmentedButton<_MonitorView>(
+              segments: const [
+                ButtonSegment(
+                  value: _MonitorView.data,
+                  icon: Icon(Icons.list_alt),
+                  label: Text('Data'),
+                ),
+                ButtonSegment(
+                  value: _MonitorView.map,
+                  icon: Icon(Icons.map_outlined),
+                  label: Text('Map'),
+                ),
+              ],
+              selected: {_view},
+              onSelectionChanged: (selection) =>
+                  setState(() => _view = selection.first),
+            ),
+          ),
           // Once we have a last-known location, keep it on screen -- a lost
           // connection or a transient "too few markers" reading only shows a
           // thin banner, it never blanks out the display.
           if (_lastGoodResult != null && _statusMessage != null)
             _StaleBanner(message: _statusMessage!),
           Expanded(
-            child: _lastGoodResult != null
-                ? _LocalizationDisplay(
-                    result: _lastGoodResult!,
-                    optitrackResult: _optitrackResult,
-                    optitrackError: _optitrackError,
-                    isSendingToOptiTrack: _isSendingToOptiTrack,
-                    onSendToOptiTrack: _sendToOptiTrack,
-                  )
-                : _statusMessage != null
-                    ? _ErrorState(message: _statusMessage!)
-                    : _IdleState(
-                        isConnected: conn.isConnected,
-                        isPolling: _isPolling,
-                        onStart: conn.isConnected ? _startPolling : null,
-                      ),
+            child: _view == _MonitorView.map
+                ? _buildMapView(context)
+                : _lastGoodResult != null
+                    ? _LocalizationDisplay(
+                        result: _lastGoodResult!,
+                        optitrackResult: _optitrackResult,
+                        optitrackError: _optitrackError,
+                        isSendingToOptiTrack: _isSendingToOptiTrack,
+                        onSendToOptiTrack: _sendToOptiTrack,
+                      )
+                    : _statusMessage != null
+                        ? _ErrorState(message: _statusMessage!)
+                        : _IdleState(
+                            isConnected: conn.isConnected,
+                            isPolling: _isPolling,
+                            onStart: conn.isConnected ? _startPolling : null,
+                          ),
           ),
         ],
       ),
@@ -672,6 +737,38 @@ class _IdleState extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _MapPlaceholder extends StatelessWidget {
+  final int markerCount;
+  const _MapPlaceholder({required this.markerCount});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final message = markerCount == 0
+        ? 'No calibrated markers yet.\nAdd markers in the Markers tab.'
+        : markerCount == 1
+            ? 'Need at least 2 markers to draw a room map.'
+            : 'Calibrated markers must span both X and Z to draw a map.';
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.map_outlined, size: 56, color: cs.outlineVariant),
+            const SizedBox(height: 16),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ],
+        ),
       ),
     );
   }
