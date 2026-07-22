@@ -2,7 +2,11 @@
 We use a large amount of algorithms, as this project relies on them heavily, this file will try to explain them as cleanly as possible
 
 ## Localization
-The heavy algorithm - DOR PUT HERE
+The algorithm that performs the localization itself after the ArUco detection and poes estimation
+Under the ROBOTICS lab enviroment, in the OPTITRACK system grey box, with 11 ArUco markers, which positions where estimated using OPTITRACK itself, and the prediction accuracy measured by OPTITRACK itself we reached:
+- approxiamted error of 3-4cm.
+- speed of 1.2 FPS.
+- delay of approximatly 1.7s(due to camera snapping speed, ArUco marker detection, mathematical calculation, etc...)
 
 ## Camera Image Snapping
 This algorithm is the one taking pictures from each camera and decieds which images to pass on to the next level in pipe
