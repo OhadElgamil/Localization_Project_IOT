@@ -41,7 +41,7 @@ and visualized live through a companion Flutter app, making it a low-cost, mobil
 * python3-picamera2 (installed via `sudo apt install python3-picamera2` on the Raspberry Pi)
 
 ## Project Poster:
-<!-- Place your project poster here -->
+<img width="2532" height="3666" alt="Slide1" src="https://github.com/user-attachments/assets/977c7d4c-b0c0-4ffe-87c9-c87aa4dee340" />
 
 This project is part of ICST - The Interdisciplinary Center for Smart Technologies, Taub Faculty of Computer Science, Technion
 https://icst.cs.technion.ac.il/
