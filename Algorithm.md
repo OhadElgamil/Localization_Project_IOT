@@ -1,7 +1,7 @@
 # Algorithms
 We use a large amount of algorithms, as this project relies on them heavily, this file will try to explain them as cleanly as possible
 
-### Localization
+## Localization
 The heavy algorithm - DOR PUT HERE
 
 ## Camera Image Snapping
