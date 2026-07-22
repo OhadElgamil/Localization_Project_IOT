@@ -1,8 +1,3 @@
-"""Central configuration for the Pi-side localization pipeline.
-
-Values marked TODO are placeholders — measure your actual rig and fill them
-in before trusting the output. Everything else has a working default.
-"""
 import os
 import cv2
 from geometry import extrinsic_transform, invert_homogeneous
@@ -10,12 +5,7 @@ from geometry import extrinsic_transform, invert_homogeneous
 PIPELINE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(PIPELINE_DIR)
 
-# ---------------------------------------------------------------------------
-# Network
-# ---------------------------------------------------------------------------
-# Must match `pi_port` hardcoded in the ESP32-CAM/ESP-EYE firmware. Changing
-# this requires reflashing every camera, so leave it alone unless you also
-# update the firmware.
+
 CAMERA_TCP_HOST = "0.0.0.0"
 CAMERA_TCP_PORT = 5000
 
@@ -37,14 +27,19 @@ SNAP_TIMEOUT_S = 1.5       # per-camera SNAP round trip timeout: cameras are now
                            # single flaky camera can't false-flag the whole
                            # pipeline as disconnected -- it's just skipped for
                            # that cycle instead, and picked up again next time.
+
+
 FRAME_CACHE_TTL_S = 2.0    # If a camera fails to snap this cycle, reuse its last
                            # frame's detections if they are younger than this timeout.
-CYCLE_SLEEP_S = 0.05       # gap between sampling cycles
+
+CYCLE_SLEEP_S = 0.5       # gap between sampling cycles
 
 # "DEBUG" logs every raw detection, distance, candidate pose, and POST
 # payload -- verbose but exactly what you want while diagnosing bad output.
-# Turn down to "INFO" for quieter day-to-day running once things check out.
+# Turn down to "INFO" for quieter day-to-day running 
 LOG_LEVEL = "DEBUG"
+
+
 
 # ---------------------------------------------------------------------------
 # Marker map (shared with the Flutter app via the filesystem)
@@ -87,9 +82,6 @@ PICAM_HEIGHT = 1200
 # each translation; each yaw is whatever rotation makes that camera face
 # straight outward from its own edge, solved against the -Z-at-identity
 # convention above.
-# TODO: if the rig geometry changes (different size, different arrangement),
-# recompute these -- this config makes no assumption about rig shape, these
-# specific numbers are just this rig's measurements.
 # ---------------------------------------------------------------------------
 CAMERA_EXTRINSICS_RAW = {
     "FRONT": {"translation_m": (0.0, 0.0, -0.05), "rpy_deg": (0.0, 0.0, 0.0)},
